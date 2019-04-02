@@ -48,24 +48,20 @@ class GameDataContainer:
         for gameIdx,dataIdx in zip(validIndexes,dataIndexes):
             self.__indexes[gameIdx].append(dataIdx)
         
-    def getIndexes(self): return self.__indexes
-    
     def getData(self): return {'boardsData': self.__boardsData,
                                'playersData': self.__playersData,
                                'availableActionsData': self.__availableActionsData,
-                               'controlVariablesData': self.__controlVariablesData}
+                               'controlVariablesData': self.__controlVariablesData},\
+                               self.__indexes
     
-    def setIndexes(self, indexes):
-        self.__indexes = indexes
-    
-    def setData(self, data):
+    def setData(self, data, indexes):
         self.__boardsData = data['boardsData']    
         self.__playersData = data['playersData']    
         self.__availableActionsData = data['availableActionsData']   
         self.__controlVariablesData = data['controlVariablesData']   
-
-
-# %%
+        self.__indexes = indexes
+#
+## %%
 #
 #from texas_hu_engine.wrappers import initRandomGames, executeActions, createActionsToExecute
 #from texas_hu_engine.wrappers import GameState
