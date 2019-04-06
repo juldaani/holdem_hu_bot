@@ -25,7 +25,23 @@ from holdem_hu_bot.game_data_container import GameDataContainer
 from texas_hu_engine.wrappers import initRandomGames, GameState
 from texas_hu_engine.engine_numba import getBoardCards, getGameEndState
 from equity_calculator.equity_calculator import computeEquities
+from hand_eval.params import cardToInt, intToCard
 
+
+cardToSuit = np.zeros((52,4), dtype=np.int8)
+cardToRank = np.zeros((52,13), dtype=np.int8)
+ranks = ['A','2','3','4','5','6','7','8','9','T','J','Q','K']
+for cardNum in intToCard:
+    card = intToCard[cardNum]
+    print(cardNum,card)
+    
+    cardToSuit[cardNum,0], cardToSuit[cardNum,1] = 'c' in card, 'd' in card
+    cardToSuit[cardNum,2], cardToSuit[cardNum,3] = 'h' in card, 's' in card
+    cardToRank[cardNum] = [rank in card for rank in ranks]
+    
+    
+    
+    
 
 class Features(GameDataContainer):
     
@@ -51,24 +67,39 @@ class Features(GameDataContainer):
             
         super().addData(gameStates)
         
-        
+    
     def getFeatures(self):
         data, indexes = super().getData()
         
         # Get indexes for the last game states
         lastIndexes = [curIndexes[-1] for curIndexes in indexes]
+        
+        boardsData = data['boardsData'][lastIndexes]
+        playersData = data['playersData'][lastIndexes]
+        availableActions = data['availableActionsData'][lastIndexes]
+        controlVariables= data['controlVariablesData'][lastIndexes]
+        
+        smallBlinds = np.row_stack(boardsData[:,1]) # Small blinds amounts are used for normalization
+        actingPlayerIdx = np.argmax(playersData[:,[6,14]], 1)
+        isSmallBlindPlayer = playersData[:,[4,12]][np.arange(len(actingPlayerIdx)),actingPlayerIdx]
+        
+        potsNormalized = (boardsData[:,0] + playersData[:,3] + playersData[:,11])/smallBlinds.flatten()
+        
+
+        actionsNormalized = availableActions / smallBlinds
+        
 
         controlVars = data['controlVariablesData'][lastIndexes]
-        gameValidMask = ~controlVars[:,1].astype(np.bool)    # Tells if the game is still going
+        gameValidMask = ~controlVars[:,1].astype(np.bool)    # Tells if the game is still ongoing
         
-        
+        data['controlVariablesData']
         
         
         return data, indexes
         
 
 
-N = 5
+N = 100000
 
 gameStates = initRandomGames(N)
 asd = Features(N)
