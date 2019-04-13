@@ -25,23 +25,28 @@ from holdem_hu_bot.game_data_container import GameDataContainer
 from texas_hu_engine.wrappers import initRandomGames, GameState
 from texas_hu_engine.engine_numba import getBoardCards, getGameEndState
 from equity_calculator.equity_calculator import computeEquities
-from hand_eval.params import cardToInt, intToCard
+from holdem_hu_bot.common_stuff import suitsOnehotLut, ranksOnehotLut, encodeCardsOnehot
 
 
-cardToSuit = np.zeros((52,4), dtype=np.int8)
-cardToRank = np.zeros((52,13), dtype=np.int8)
-ranks = ['A','2','3','4','5','6','7','8','9','T','J','Q','K']
-for cardNum in intToCard:
-    card = intToCard[cardNum]
-    print(cardNum,card)
+#%%    
+#
+#def encodeCardsOnehot(cards, visibleCardsMask, ranksOnehotLut, suitsOnehotLut):
+#    visibleCardsMaskRanks = np.repeat(visibleCardsMask, ranksOnehotLut.shape[1], axis=1)
+#    visibleCardsMaskSuits = np.repeat(visibleCardsMask, suitsOnehotLut.shape[1], axis=1)
+#    cardSuitsOnehot = suitsOnehotLut[cards].reshape((len(cards), cards.shape[1]*suitsOnehotLut.shape[1]))
+#    cardRanksOnehot = ranksOnehotLut[cards].reshape((len(cards), cards.shape[1]*ranksOnehotLut.shape[1]))
+#    cardSuitsOnehot[~visibleCardsMaskSuits.astype(np.bool)] = 0    # Set nonvisible cards to zero
+#    cardRanksOnehot[~visibleCardsMaskRanks.astype(np.bool)] = 0
+#    
+#    return cardSuitsOnehot, cardRanksOnehot
+
+
+
     
-    cardToSuit[cardNum,0], cardToSuit[cardNum,1] = 'c' in card, 'd' in card
-    cardToSuit[cardNum,2], cardToSuit[cardNum,3] = 'h' in card, 's' in card
-    cardToRank[cardNum] = [rank in card for rank in ranks]
     
-    
-    
-    
+
+# %%
+
 
 class Features(GameDataContainer):
     
@@ -77,20 +82,38 @@ class Features(GameDataContainer):
         boardsData = data['boardsData'][lastIndexes]
         playersData = data['playersData'][lastIndexes]
         availableActions = data['availableActionsData'][lastIndexes]
-        controlVariables= data['controlVariablesData'][lastIndexes]
+        controlVariables = data['controlVariablesData'][lastIndexes]
         
         smallBlinds = np.row_stack(boardsData[:,1]) # Small blinds amounts are used for normalization
         actingPlayerIdx = np.argmax(playersData[:,[6,14]], 1)
+        nonActingPlayerIdx = (~actingPlayerIdx.astype(np.bool)).astype(np.int)
         isSmallBlindPlayer = playersData[:,[4,12]][np.arange(len(actingPlayerIdx)),actingPlayerIdx]
         
-        potsNormalized = (boardsData[:,0] + playersData[:,3] + playersData[:,11])/smallBlinds.flatten()
-        
-
+        pots = boardsData[:,0]
+        bets = playersData[:,3] + playersData[:,11]
+        potsNormalized = (pots + bets) / smallBlinds.flatten()
         actionsNormalized = availableActions / smallBlinds
         
+        stacks = playersData[:,[2,10]]
+        ownStacksNormalized = stacks[np.arange(len(stacks)),actingPlayerIdx] / smallBlinds.flatten()
+        opponentStacksNormalized = stacks[np.arange(len(stacks)),nonActingPlayerIdx] / smallBlinds.flatten()
+        
+        
+        # Encode cards one hot
+        boardCards = boardsData[:,8:]
+        visibleCardsMask = boardsData[:,3:8].astype(np.bool)
+        boardcardSuitsOnehot, boardcardRanksOnehot  = encodeCardsOnehot(boardCards, visibleCardsMask, 
+                                                                        ranksOnehotLut, suitsOnehotLut)
+        holecards = playersData[:,[0,1,8,9]]
+        holecards = holecards.reshape((len(holecards),2,2))
+        holecards = holecards[np.arange(len(holecards)),actingPlayerIdx]
+        holecardSuitsOnehot, holecardRanksOnehot = encodeCardsOnehot(holecards,
+                                                                     np.ones(holecards.shape, dtype=np.bool), 
+                                                                     ranksOnehotLut, suitsOnehotLut)
 
         controlVars = data['controlVariablesData'][lastIndexes]
         gameValidMask = ~controlVars[:,1].astype(np.bool)    # Tells if the game is still ongoing
+        
         
         data['controlVariablesData']
         
@@ -99,7 +122,7 @@ class Features(GameDataContainer):
         
 
 
-N = 100000
+N = 3
 
 gameStates = initRandomGames(N)
 asd = Features(N)
@@ -109,7 +132,19 @@ asd.equities[1]['flop']
 
 data, indexes = asd.getFeatures()
 
+# %%
 
+
+cardToSuit = np.zeros((52,4), dtype=np.int8)
+cardToRank = np.zeros((52,13), dtype=np.int8)
+ranks = ['A','2','3','4','5','6','7','8','9','T','J','Q','K']
+for cardNum in intToCard:
+    card = intToCard[cardNum]
+    print(cardNum,card)
+    
+    cardToSuit[cardNum,0], cardToSuit[cardNum,1] = 'c' in card, 'd' in card
+    cardToSuit[cardNum,2], cardToSuit[cardNum,3] = 'h' in card, 's' in card
+    cardToRank[cardNum] = [rank in card for rank in ranks]
 
 
 
