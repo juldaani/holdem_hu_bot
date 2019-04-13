@@ -76,9 +76,7 @@ class Features(GameDataContainer):
     def getFeatures(self):
         data, indexes = super().getData()
         
-        # Get indexes for the last game states
-        lastIndexes = [curIndexes[-1] for curIndexes in indexes]
-        
+        lastIndexes = [curIndexes[-1] for curIndexes in indexes]    # Get indexes for the last game states
         boardsData = data['boardsData'][lastIndexes]
         playersData = data['playersData'][lastIndexes]
         availableActions = data['availableActionsData'][lastIndexes]
@@ -89,15 +87,14 @@ class Features(GameDataContainer):
         nonActingPlayerIdx = (~actingPlayerIdx.astype(np.bool)).astype(np.int)
         isSmallBlindPlayer = playersData[:,[4,12]][np.arange(len(actingPlayerIdx)),actingPlayerIdx]
         
+        # Pots, stacks etc. money stuffs
         pots = boardsData[:,0]
         bets = playersData[:,3] + playersData[:,11]
+        stacks = playersData[:,[2,10]]
         potsNormalized = (pots + bets) / smallBlinds.flatten()
         actionsNormalized = availableActions / smallBlinds
-        
-        stacks = playersData[:,[2,10]]
         ownStacksNormalized = stacks[np.arange(len(stacks)),actingPlayerIdx] / smallBlinds.flatten()
         opponentStacksNormalized = stacks[np.arange(len(stacks)),nonActingPlayerIdx] / smallBlinds.flatten()
-        
         
         # Encode cards one hot
         boardCards = boardsData[:,8:]
@@ -111,12 +108,8 @@ class Features(GameDataContainer):
                                                                      np.ones(holecards.shape, dtype=np.bool), 
                                                                      ranksOnehotLut, suitsOnehotLut)
 
-        controlVars = data['controlVariablesData'][lastIndexes]
-        gameValidMask = ~controlVars[:,1].astype(np.bool)    # Tells if the game is still ongoing
-        
-        
-        data['controlVariablesData']
-        
+        gameValidMask = ~controlVariables[:,1].astype(np.bool)    # Tells if the game is still on
+        bettingRound = visibleCardsMask[:,2:].astype(np.int)
         
         return data, indexes
         
