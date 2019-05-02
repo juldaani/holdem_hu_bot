@@ -7,6 +7,7 @@ Created on Mon Apr  1 20:18:43 2019
 """
 
 import numpy as np
+import pandas as pd
 from holdem_hu_bot.game_data_container import GameDataContainer
 
 """
@@ -22,7 +23,7 @@ from holdem_hu_bot.game_data_container import GameDataContainer
 
 # %%
 
-from texas_hu_engine.wrappers import initRandomGames, GameState
+from texas_hu_engine.wrappers import initRandomGames, GameState, executeActions
 from texas_hu_engine.engine_numba import getBoardCards, getGameEndState
 from equity_calculator.equity_calculator import computeEquities
 from holdem_hu_bot.common_stuff import suitsOnehotLut, ranksOnehotLut, encodeCardsOnehot
@@ -85,7 +86,8 @@ class Features(GameDataContainer):
         smallBlinds = np.row_stack(boardsData[:,1]) # Small blinds amounts are used for normalization
         actingPlayerIdx = np.argmax(playersData[:,[6,14]], 1)
         nonActingPlayerIdx = (~actingPlayerIdx.astype(np.bool)).astype(np.int)
-        isSmallBlindPlayer = playersData[:,[4,12]][np.arange(len(actingPlayerIdx)),actingPlayerIdx]
+        isSmallBlindPlayer = playersData[:,[4,12]][np.arange(len(actingPlayerIdx)),actingPlayerIdx].astype(
+                np.uint8)
         
         # Pots, stacks etc. money stuffs
         pots = boardsData[:,0]
@@ -110,20 +112,57 @@ class Features(GameDataContainer):
 
         gameValidMask = ~controlVariables[:,1].astype(np.bool)    # Tells if the game is still on
         bettingRound = visibleCardsMask[:,2:].astype(np.int)
+
+        # Get equities
+        bettingRoundNames = ['preflop','flop','turn','river']
+        equities = np.zeros(len(smallBlinds), dtype=np.float32)
+        for i in range(len(actingPlayerIdx)):
+            curPlayerIdx = actingPlayerIdx[i]
+            curBettingRound = np.argmax(bettingRound[i])
+            equity = self.equities[curPlayerIdx][bettingRoundNames[curBettingRound]][i]
+            equities[i] = equity
         
-        return data, indexes
+        return {'isSmallBlindPlayer':isSmallBlindPlayer, 'bettingRound':bettingRound, 'equities':equities,
+                
+                'potsNoarmalized':potsNormalized, 'actionsNormalized':actionsNormalized, 
+                'ownStacksNormalized':ownStacksNormalized,
+                'opponentStacksNormalized':opponentStacksNormalized, 
+                
+                'boardcardSuits':boardcardSuitsOnehot, 'boardcardRanks':boardcardRanksOnehot,
+                'holecardSuits':holecardSuitsOnehot, 'holecardRanks':holecardRanksOnehot,
+                
+                'gameValidMask':gameValidMask}
         
 
+# %%
 
-N = 3
+N = 10
 
 gameStates = initRandomGames(N)
 asd = Features(N)
+
+# %%
+
 asd.addData(gameStates)
 
-asd.equities[1]['flop']
+rndActions = gameStates.availableActions[np.arange(N),np.random.randint(0,3, size=N)]
+rndActions = np.column_stack((np.ones(N)*-1, rndActions))
+mask = gameStates.availableActions >= 0
 
-data, indexes = asd.getFeatures()
+
+gameStates = executeActions(gameStates, rndActions)
+
+print(np.sum(gameStates.validMask))
+
+
+# %%
+
+#asd.equities[1]['flop']
+#eq = asd.equities
+
+ddd = asd.getFeatures()
+
+ddd['equities'].shape
 
 # %%
 

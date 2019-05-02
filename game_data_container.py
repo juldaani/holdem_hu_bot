@@ -60,6 +60,7 @@ class GameDataContainer:
         self.__availableActionsData = data['availableActionsData']   
         self.__controlVariablesData = data['controlVariablesData']   
         self.__indexes = indexes
+        
 #
 ## %%
 #
