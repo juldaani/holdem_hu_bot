@@ -38,15 +38,42 @@ class RfFeatures(GameDataContainer):
             
         super().addData(gameStates)
         
-    
-    def getFeatures(self):
-        data, indexes = super().getData()
         
-        lastIndexes = [curIndexes[-1] for curIndexes in indexes]    # Get indexes for the last game states
-        boardsData = data['boardsData'][lastIndexes]
-        playersData = data['playersData'][lastIndexes]
-        availableActions = data['availableActionsData'][lastIndexes]
-        controlVariables = data['controlVariablesData'][lastIndexes]
+    def getLastIndexes(self):
+        _, indexes = super().getData()
+        # Get indexes for the last (the most recent) game states
+        lastIndexes = [curIndexes[-1] for curIndexes in indexes]
+        gameNumbers = [gameNum for gameNum in range(len(indexes))]
+        
+        return lastIndexes, gameNumbers
+    
+
+    def getAllIndexes(self):
+        _, indexes = super().getData()
+        
+        gameNumbers = [np.full(len(indexes[gameNum]), gameNum) for gameNum in range(len(indexes))]
+        gameNumbers = np.concatenate(gameNumbers)
+        indexes2 = np.concatenate(indexes)
+        
+        return indexes2, gameNumbers
+    
+    
+    def getFeaturesForAllGameStates(self):
+        indexes, gameNumbers = self.getAllIndexes()
+        
+        return self.computeFeatures(indexes, gameNumbers)
+    
+    
+    def computeFeatures(self, indexes, gameNumbers):
+        data, _ = super().getData()
+        
+#        indexes, gameNumbers = rfFeatures.getAllIndexes()   # TODO: remove
+#        data,_ = rfFeatures.getData()   # TODO: remove
+        
+        boardsData = data['boardsData'][indexes]
+        playersData = data['playersData'][indexes]
+        availableActions = data['availableActionsData'][indexes]
+        controlVariables = data['controlVariablesData'][indexes]
         
         smallBlinds = np.row_stack(boardsData[:,1]) # Small blinds amounts are used for normalization
         actingPlayerIdx = np.argmax(playersData[:,[6,14]], 1)
@@ -60,43 +87,49 @@ class RfFeatures(GameDataContainer):
         stacks = playersData[:,[2,10]]
         potsNormalized = (pots + bets) / smallBlinds.flatten()
         actionsNormalized = availableActions / smallBlinds
+        actionsNormalized[availableActions < 0] = -1
         ownStacksNormalized = stacks[np.arange(len(stacks)),actingPlayerIdx] / smallBlinds.flatten()
         opponentStacksNormalized = stacks[np.arange(len(stacks)),nonActingPlayerIdx] / smallBlinds.flatten()
         
         # Encode cards one hot
         boardCards = boardsData[:,8:]
+        boardCards[boardCards == -999] = 0  # Assign zero if failure code because otherwise 
+            # 'encodeCardsOnehot' will fail
         visibleCardsMask = boardsData[:,3:8].astype(np.bool)
         boardcardSuitsOnehot, boardcardRanksOnehot  = encodeCardsOnehot(boardCards, visibleCardsMask, 
                                                                         ranksOnehotLut, suitsOnehotLut)
         holecards = playersData[:,[0,1,8,9]]
         holecards = holecards.reshape((len(holecards),2,2))
         holecards = holecards[np.arange(len(holecards)),actingPlayerIdx]
+        holecards[holecards == -999] = 0  # Assign zero if failure code because otherwise 
+            # 'encodeCardsOnehot' will fail
         holecardSuitsOnehot, holecardRanksOnehot = encodeCardsOnehot(holecards,
                                                                      np.ones(holecards.shape, dtype=np.bool), 
                                                                      ranksOnehotLut, suitsOnehotLut)
-
-        gameValidMask = ~controlVariables[:,1].astype(np.bool)    # Tells if the current game is still on
+        
+        gameFinishedMask = controlVariables[:,1] == 1   # Tells if the game has finished succesfully
+        gameFailedMask = controlVariables[:,1] == -999  # Tells if an error has occured
         bettingRound = visibleCardsMask[:,2:].astype(np.int)
 
         # Get equities
         bettingRoundNames = ['preflop','flop','turn','river']
         equities = np.zeros(len(smallBlinds), dtype=np.float32)
-        for i in range(len(actingPlayerIdx)):
+        for i, gameNum in enumerate(gameNumbers):
             curPlayerIdx = actingPlayerIdx[i]
-            curBettingRound = np.argmax(bettingRound[i])
-            equity = self.equities[curPlayerIdx][bettingRoundNames[curBettingRound]][i]
+            curBettingRound = np.sum(bettingRound[i])
+            equity = self.equities[curPlayerIdx][bettingRoundNames[curBettingRound]][gameNum]  
             equities[i] = equity
-        
+
         return {'isSmallBlindPlayer':isSmallBlindPlayer, 'bettingRound':bettingRound, 'equities':equities,
                 
-                'potsNoarmalized':potsNormalized, 'actionsNormalized':actionsNormalized, 
+                'potsNormalized':potsNormalized, 'actionsNormalized':actionsNormalized, 
                 'ownStacksNormalized':ownStacksNormalized,
                 'opponentStacksNormalized':opponentStacksNormalized, 
                 
                 'boardcardSuits':boardcardSuitsOnehot, 'boardcardRanks':boardcardRanksOnehot,
                 'holecardSuits':holecardSuitsOnehot, 'holecardRanks':holecardRanksOnehot,
                 
-                'gameValidMask':gameValidMask}
+                'gameFinishedMask':gameFinishedMask, 'gameFailedMask':gameFailedMask}
         
         
         

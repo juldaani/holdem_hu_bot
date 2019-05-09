@@ -17,13 +17,14 @@ from texas_hu_engine.wrappers import initRandomGames, executeActions
 # %%
 # Run random games to initialize random forest agent
 
-nGames = 1000
+nGames = 10
 
 agents = [RndAgent(0), RndAgent(1)]
 rfFeatures = RfFeatures(nGames)
 gameStates = initRandomGames(nGames)
-#rfFeatures.addData(gameStates)
+rfFeatures.addData(gameStates)
 
+c = 0   # TODO: remove
 while(1):
     actionsAgent0, maskAgent0 = agents[0].getActions(gameStates)
     actionsAgent1, maskAgent1 = agents[1].getActions(gameStates)
@@ -32,10 +33,14 @@ while(1):
     actionsToExecute[maskAgent0] = actionsAgent0
     actionsToExecute[maskAgent1] = actionsAgent1
     
+    # TODO: remove
+    if(c==0):
+        actionsToExecute[0] = -433453
+    c+=1
+    
     gameStates = executeActions(gameStates, actionsToExecute)
     
-#    rfFeatures.addData(gameStates)
-#    rfFeatures.getFeatures()
+    rfFeatures.addData(gameStates)
     
     nValidGames = np.sum(gameStates.controlVariables[:,1]==0)
     print(nValidGames)
@@ -45,5 +50,17 @@ while(1):
 
 
 # %%
+
+feats = rfFeatures.getFeaturesForAllGameStates()
+
+
+
+
+
+
+
+
+
+
 
 
