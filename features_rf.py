@@ -7,6 +7,7 @@ Created on Mon Apr  1 20:18:43 2019
 """
 
 import numpy as np
+import pandas as pd
 from holdem_hu_bot.game_data_container import GameDataContainer
 
 from equity_calculator.equity_calculator import computeEquities
@@ -21,7 +22,7 @@ class RfFeatures(GameDataContainer):
         self.equities = None
         
         
-    def addData(self, gameStates):
+    def addData(self, gameStates, actions):
         if(self.equities == None):
             equities = {0:{}, 1:{}}
        
@@ -36,7 +37,7 @@ class RfFeatures(GameDataContainer):
             
             self.equities = equities
             
-        super().addData(gameStates)
+        super().addData(gameStates, actions)
         
         
     def getLastIndexes(self):
@@ -74,6 +75,7 @@ class RfFeatures(GameDataContainer):
         playersData = data['playersData'][indexes]
         availableActions = data['availableActionsData'][indexes]
         controlVariables = data['controlVariablesData'][indexes]
+        executedActions = data['actions'][indexes]
         
         smallBlinds = np.row_stack(boardsData[:,1]) # Small blinds amounts are used for normalization
         actingPlayerIdx = np.argmax(playersData[:,[6,14]], 1)
@@ -81,13 +83,23 @@ class RfFeatures(GameDataContainer):
         isSmallBlindPlayer = playersData[:,[4,12]][np.arange(len(actingPlayerIdx)),actingPlayerIdx].astype(
                 np.uint8)
         
+        # Normalize executed actions
+        smallBlinds = np.full(len(executedActions), 56).reshape((-1,1))
+        mask1 = executedActions == -1
+        mask2 = executedActions == -999
+        mask3 = executedActions[:,0] == 1
+        executedActions = executedActions / smallBlinds
+        executedActions[mask1] = -1
+        executedActions[mask2] = -999
+        executedActions[mask3,0] = 1
+        
         # Pots, stacks etc. money stuffs
         pots = boardsData[:,0]
         bets = playersData[:,3] + playersData[:,11]
         stacks = playersData[:,[2,10]]
         potsNormalized = (pots + bets) / smallBlinds.flatten()
-        actionsNormalized = availableActions / smallBlinds
-        actionsNormalized[availableActions < 0] = -1
+        availableActionsNormalized = availableActions / smallBlinds
+        availableActionsNormalized[availableActions < 0] = -1
         ownStacksNormalized = stacks[np.arange(len(stacks)),actingPlayerIdx] / smallBlinds.flatten()
         opponentStacksNormalized = stacks[np.arange(len(stacks)),nonActingPlayerIdx] / smallBlinds.flatten()
         
@@ -119,18 +131,16 @@ class RfFeatures(GameDataContainer):
             curBettingRound = np.sum(bettingRound[i])
             equity = self.equities[curPlayerIdx][bettingRoundNames[curBettingRound]][gameNum]  
             equities[i] = equity
-
-        return {'isSmallBlindPlayer':isSmallBlindPlayer, 'bettingRound':bettingRound, 'equities':equities,
-                
-                'potsNormalized':potsNormalized, 'actionsNormalized':actionsNormalized, 
-                'ownStacksNormalized':ownStacksNormalized,
-                'opponentStacksNormalized':opponentStacksNormalized, 
-                
-                'boardcardSuits':boardcardSuitsOnehot, 'boardcardRanks':boardcardRanksOnehot,
-                'holecardSuits':holecardSuitsOnehot, 'holecardRanks':holecardRanksOnehot,
-                
-                'gameFinishedMask':gameFinishedMask, 'gameFailedMask':gameFailedMask}
+                    
+        miscDict = {'availableActionsNormalized':availableActionsNormalized, 
+                    'gameFinishedMask':gameFinishedMask, 'gameFailedMask':gameFailedMask}
         
+        features = np.column_stack((isSmallBlindPlayer, bettingRound, equities, availableActionsNormalized,
+                                    potsNormalized, ownStacksNormalized, opponentStacksNormalized,
+                                    boardcardSuitsOnehot, boardcardRanksOnehot, holecardSuitsOnehot, 
+                                    holecardRanksOnehot))
+
+        return features, executedActions, miscDict
         
         
         

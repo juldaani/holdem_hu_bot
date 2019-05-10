@@ -14,7 +14,7 @@ class GameDataContainer:
     def __init__(self, nGames):
         self.__indexes = [[] for i in range(nGames)]
         self.__boardsData, self.__playersData, self.__controlVariablesData, \
-            self.__availableActionsData = None, None, None, None
+            self.__availableActionsData, self.__actions = None, None, None, None, None
     
     def flattenPlayersData(self, playersData):
         flattenedData = np.zeros((int(len(playersData)/2), 
@@ -24,7 +24,7 @@ class GameDataContainer:
         
         return flattenedData
         
-    def addData(self, gameStates):
+    def addData(self, gameStates, actions):
         validIndexes = np.nonzero(gameStates.validMask)[0]
         nDataPts = 0
         
@@ -33,6 +33,7 @@ class GameDataContainer:
             self.__playersData = self.flattenPlayersData(gameStates.players)[validIndexes]
             self.__controlVariablesData = gameStates.controlVariables[validIndexes]
             self.__availableActionsData = gameStates.availableActions[validIndexes]
+            self.__actions = actions
         else:
             nDataPts = len(self.__boardsData)
             self.__boardsData = np.row_stack((self.__boardsData, gameStates.boards[validIndexes]))
@@ -43,6 +44,7 @@ class GameDataContainer:
                                                       gameStates.controlVariables[validIndexes]))
             self.__availableActionsData = np.row_stack((self.__availableActionsData, 
                                                       gameStates.availableActions[validIndexes]))
+            self.__actions = np.row_stack((self.__actions, actions[validIndexes]))
         
         dataIndexes = np.arange(len(validIndexes)) + nDataPts
         for gameIdx,dataIdx in zip(validIndexes,dataIndexes):
@@ -51,14 +53,15 @@ class GameDataContainer:
     def getData(self): return {'boardsData': self.__boardsData,
                                'playersData': self.__playersData,
                                'availableActionsData': self.__availableActionsData,
-                               'controlVariablesData': self.__controlVariablesData},\
-                               self.__indexes
+                               'controlVariablesData': self.__controlVariablesData,
+                               'actions': self.__actions}, self.__indexes
     
     def setData(self, data, indexes):
         self.__boardsData = data['boardsData']    
         self.__playersData = data['playersData']    
         self.__availableActionsData = data['availableActionsData']   
-        self.__controlVariablesData = data['controlVariablesData']   
+        self.__controlVariablesData = data['controlVariablesData']
+        self.__actions = data['actions']
         self.__indexes = indexes
         
 #
