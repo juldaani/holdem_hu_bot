@@ -17,7 +17,7 @@ from texas_hu_engine.wrappers import initRandomGames, executeActions
 # %%
 # Run random games to initialize random forest agent
 
-nGames = 1000
+nGames = 5
 
 agents = [RndAgent(0), RndAgent(1)]
 rfFeatures = RfFeatures(nGames)
@@ -50,6 +50,17 @@ while(1):
 # Save also last game state
 actionsToExecute = np.zeros((len(gameStates.availableActions),2), dtype=np.int64)-999
 rfFeatures.addData(gameStates, actionsToExecute)
+
+
+# %%
+# Get 
+
+
+winAmounts, winPlayerIdx, gameNums = rfFeatures.getWinAmountsNormalized()
+
+#asd = rfFeatures.getWinAmountsNormalized()
+
+
 
 # %%
 # Train extra trees regressor
