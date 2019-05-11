@@ -38,6 +38,17 @@ class RfFeatures(GameDataContainer):
             self.equities = equities
             
         super().addData(gameStates, actions)
+    
+    
+    def getWinAmountsNormalized(self):
+        data, _ = super().getData()
+        winAmounts, winPlayerIdx, gameNums = super().getWinAmounts()
+        indexes, _ = super().getFirstIndexes()
+        
+        boardsData = data['boardsData'][indexes]
+        smallBlinds = boardsData[:,1]
+        
+        return winAmounts / smallBlinds, winPlayerIdx, gameNums
         
     
     def getFeaturesForAllGameStates(self):
