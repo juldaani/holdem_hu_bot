@@ -16,6 +16,7 @@ class GameDataContainer:
         self.__boardsData, self.__playersData, self.__controlVariablesData, \
             self.__availableActionsData, self.__actions = None, None, None, None, None
     
+    
     def flattenPlayersData(self, playersData):
         flattenedData = np.zeros((int(len(playersData)/2), 
                                   playersData.shape[1]*2), dtype=playersData.dtype)
@@ -23,7 +24,57 @@ class GameDataContainer:
         flattenedData[:,playersData.shape[1]:] = playersData[1::2]
         
         return flattenedData
+    
+    
+    def getLastIndexes(self):
+        _, indexes = self.getData()
+        # Get indexes for the last (the most recent) game states
+        lastIndexes = [curIndexes[-1] for curIndexes in indexes]
+        gameNumbers = [gameNum for gameNum in range(len(indexes))]
         
+        return lastIndexes, gameNumbers
+    
+    
+    def getFirstIndexes(self):
+        _, indexes = self.getData()
+        # Get indexes for the last (the most recent) game states
+        lastIndexes = [curIndexes[0] for curIndexes in indexes]
+        gameNumbers = [gameNum for gameNum in range(len(indexes))]
+        
+        return lastIndexes, gameNumbers
+    
+    
+    def getAllIndexes(self):
+        _, indexes = self.getData()
+        
+        gameNumbers = [np.full(len(indexes[gameNum]), gameNum) for gameNum in range(len(indexes))]
+        gameNumbers = np.concatenate(gameNumbers)
+        indexes2 = np.concatenate(indexes)
+        
+        return indexes2, gameNumbers
+        
+    
+    def getWinAmounts(self):
+        firstIndexes, gameNums = self.getFirstIndexes()
+        lastIndexes, _ = self.getLastIndexes()
+        
+        data, _ = self.getData()
+        playersData = data['playersData']
+        stacks = playersData[:,[2,10]]
+        winPlayerIdx = data['controlVariablesData'][lastIndexes,-1]
+        
+        initBets = np.column_stack((playersData[firstIndexes,3],playersData[firstIndexes,11]))
+        initStacks = stacks[firstIndexes] + initBets
+        finalStacks = stacks[lastIndexes]
+        
+        winnerInitStacks = initStacks[np.arange(len(winPlayerIdx)),winPlayerIdx]
+        winnerFinalStacks = finalStacks[np.arange(len(winPlayerIdx)),winPlayerIdx]
+        
+        winAmounts = winnerFinalStacks - winnerInitStacks
+    
+        return winAmounts, winPlayerIdx, gameNums
+    
+    
     def addData(self, gameStates, actions):
         validIndexes = np.nonzero(gameStates.validMask)[0]
         nDataPts = 0
@@ -50,12 +101,14 @@ class GameDataContainer:
         for gameIdx,dataIdx in zip(validIndexes,dataIndexes):
             self.__indexes[gameIdx].append(dataIdx)
         
+        
     def getData(self): return {'boardsData': self.__boardsData,
                                'playersData': self.__playersData,
                                'availableActionsData': self.__availableActionsData,
                                'controlVariablesData': self.__controlVariablesData,
                                'actions': self.__actions}, self.__indexes
     
+               
     def setData(self, data, indexes):
         self.__boardsData = data['boardsData']    
         self.__playersData = data['playersData']    
@@ -64,44 +117,3 @@ class GameDataContainer:
         self.__actions = data['actions']
         self.__indexes = indexes
         
-#
-## %%
-#
-#from texas_hu_engine.wrappers import initRandomGames, executeActions, createActionsToExecute
-#from texas_hu_engine.wrappers import GameState
-#
-#
-#N = 300
-#
-#cont = GameDataContainer(N)
-#states = initRandomGames(N)
-#
-#for i in range(100):
-#    
-#    tmp = np.arange(N).reshape((N,-1))
-#    states.availableActions[:] = tmp
-#    states.boards[:] = tmp
-#    states.controlVariables[:] = tmp
-#    states.players[:] = np.tile(tmp.flatten(), (2,1)).T.reshape((N*2,-1))
-##    states.validMask = np.array([1,0,1])
-##    states.validMask = np.array([1,0,0])
-#    states.validMask = np.random.randint(0,2,N)
-#    
-#    cont.addData(states)
-#
-#
-## %%
-#    
-#tmpData = cont.getData()
-#tmpIdx = cont.getIndexes()
-#
-#tmpData['boardsData'][tmpIdx[81]]
-#
-#
-#cont = GameDataContainer(1)
-#cont.getIndexes()
-#cont.getData()
-#
-#cont.setData(tmpData)
-#cont.setIndexes(tmpIdx)
-#

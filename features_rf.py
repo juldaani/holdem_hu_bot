@@ -39,28 +39,9 @@ class RfFeatures(GameDataContainer):
             
         super().addData(gameStates, actions)
         
-        
-    def getLastIndexes(self):
-        _, indexes = super().getData()
-        # Get indexes for the last (the most recent) game states
-        lastIndexes = [curIndexes[-1] for curIndexes in indexes]
-        gameNumbers = [gameNum for gameNum in range(len(indexes))]
-        
-        return lastIndexes, gameNumbers
-    
-
-    def getAllIndexes(self):
-        _, indexes = super().getData()
-        
-        gameNumbers = [np.full(len(indexes[gameNum]), gameNum) for gameNum in range(len(indexes))]
-        gameNumbers = np.concatenate(gameNumbers)
-        indexes2 = np.concatenate(indexes)
-        
-        return indexes2, gameNumbers
-    
     
     def getFeaturesForAllGameStates(self):
-        indexes, gameNumbers = self.getAllIndexes()
+        indexes, gameNumbers = super().getAllIndexes()
         
         return self.computeFeatures(indexes, gameNumbers)
     
