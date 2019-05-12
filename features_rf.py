@@ -76,7 +76,6 @@ class RfFeatures(GameDataContainer):
                 np.uint8)
         
         # Normalize executed actions
-        smallBlinds = np.full(len(executedActions), 56).reshape((-1,1))
         mask1 = executedActions == -1
         mask2 = executedActions == -999
         mask3 = executedActions[:,0] == 1
@@ -124,10 +123,11 @@ class RfFeatures(GameDataContainer):
             equity = self.equities[curPlayerIdx][bettingRoundNames[curBettingRound]][gameNum]  
             equities[i] = equity
                     
-        miscDict = {'availableActionsNormalized':availableActionsNormalized, 
-                    'gameFinishedMask':gameFinishedMask, 'gameFailedMask':gameFailedMask}
+        miscDict = {'availableActionsNormalized':availableActionsNormalized, 'gameNumbers':gameNumbers,
+                    'gameFinishedMask':gameFinishedMask, 'gameFailedMask':gameFailedMask, 
+                    'actingPlayerIdx':actingPlayerIdx}
         
-        features = np.column_stack((isSmallBlindPlayer, bettingRound, equities, availableActionsNormalized,
+        features = np.column_stack((isSmallBlindPlayer, bettingRound, equities, #availableActionsNormalized,
                                     potsNormalized, ownStacksNormalized, opponentStacksNormalized,
                                     boardcardSuitsOnehot, boardcardRanksOnehot, holecardSuitsOnehot, 
                                     holecardRanksOnehot))
