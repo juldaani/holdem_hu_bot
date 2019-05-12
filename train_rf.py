@@ -44,14 +44,12 @@ def getWinAmountsForFeatures(winAmounts, winPlayerIdx, actingPlayerIdx, gameNums
 # %%
 # Run random games to initialize random forest agent
 
-nGames = 1000
+nGames = 20000
 
 agents = [RndAgent(0), RndAgent(1)]
-rfFeatures = RfFeatures(nGames)
 gameStates = initRandomGames(nGames)
-#rfFeatures.addData(gameStates)
+rfFeatures = RfFeatures(gameStates)
 
-#c = 0   # TODO: remove
 while(1):
     actionsAgent0, maskAgent0 = agents[0].getActions(gameStates)
     actionsAgent1, maskAgent1 = agents[1].getActions(gameStates)
@@ -59,11 +57,6 @@ while(1):
     actionsToExecute = np.zeros((len(gameStates.availableActions),2), dtype=np.int64)-999
     actionsToExecute[maskAgent0] = actionsAgent0
     actionsToExecute[maskAgent1] = actionsAgent1
-    
-    # TODO: remove
-#    if(c==0):
-#        actionsToExecute[0] = -433453
-#    c+=1
     
     rfFeatures.addData(gameStates, actionsToExecute)
 
@@ -80,7 +73,7 @@ rfFeatures.addData(gameStates, actionsToExecute)
 
 
 
-
+asd = rfFeatures.getFeaturesForAllGameStates()
 
 features, executedActions, misc = rfFeatures.getFeaturesForAllGameStates()
 gameNumsFeatures = misc['gameNumbers']
@@ -108,6 +101,9 @@ y = winAmountsFeatures[mask]
 
 
 # %%
+
+# 0.529
+# 0.532
 
 from sklearn.ensemble import ExtraTreesRegressor
 
