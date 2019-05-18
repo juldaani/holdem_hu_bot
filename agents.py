@@ -19,9 +19,21 @@ class Agent(ABC):
     def __init__(self, playerNumber):
         self.playerNumber = playerNumber
     
+    def getMasks(self, gameStates):
+        playerNum = self.playerNumber
+        
+        actingPlayerNum = np.argmax(gameStates.players[:,6].reshape((-1,2)),1)
+        actingPlayerMask = actingPlayerNum == playerNum
+        gameEndMask = gameStates.controlVariables[:,1] == 1
+        gameFailedMask = gameStates.controlVariables[:,1] == -999
+        allMask = actingPlayerMask & ~gameEndMask & ~gameFailedMask
+        
+        return allMask, actingPlayerMask, gameEndMask, gameFailedMask
+    
     @abstractmethod
     def getActions(self, gameStates):
         pass
+    
     
         
 @jit(nopython=True, cache=True, fastmath=True, nogil=True)
@@ -64,55 +76,10 @@ def generateRndActions(availableActions):
 class RndAgent(Agent):
     
     def getActions(self, gameStates):
-        playerNum = self.playerNumber
+        allMask, actingPlayerMask, gameEndMask, gameFailedMask = super().getMasks(gameStates)
+        availableActions = gameStates.availableActions[allMask]
         
-        actingPlayerNum = np.argmax(gameStates.players[:,6].reshape((-1,2)),1)
-        playerMask = actingPlayerNum == playerNum
-        gameEndMask = gameStates.controlVariables[:,1] == 1
-        gameFailedMask = gameStates.controlVariables[:,1] == -999
-        mask = playerMask & ~gameEndMask & ~gameFailedMask
-        
-        availableActions = gameStates.availableActions[mask]
-        
-        return generateRndActions(availableActions), mask
-
-
-
-#
-## %%
-#
-#agents = [RndAgent(0), RndAgent(1)]
-#
-#N = 10
-#rfFeatures = RfFeatures(N)
-#
-#gameStates = initRandomGames(N)
-#rfFeatures.addData(gameStates)
-#
-#
-## %%
-#
-#
-#actionsAgent0, maskAgent0 = agents[0].getActions(gameStates)
-#actionsAgent1, maskAgent1 = agents[1].getActions(gameStates)
-#
-#actionsToExecute = np.zeros((len(gameStates.availableActions),2), dtype=np.int64)-999
-#actionsToExecute[maskAgent0] = actionsAgent0
-#actionsToExecute[maskAgent1] = actionsAgent1
-#
-#gameStates = executeActions(gameStates, actionsToExecute)
-#
-#rfFeatures.addData(gameStates)
-#
-#rfFeatures.getFeatures()
-#
-#print(np.sum(gameStates.controlVariables[:,1]==0))
-#
-##gameStates.controlVariables
-##np.argmax(gameStates.players[:,6].reshape((-1,2)),1)
-#
-#
-## %%
+        return generateRndActions(availableActions), allMask
 
 
 

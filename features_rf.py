@@ -151,7 +151,7 @@ class RfFeatures(GameDataContainer):
                     'gameFinishedMask':gameFinishedMask, 'gameFailedMask':gameFailedMask, 
                     'actingPlayerIdx':actingPlayerIdx}
         
-        features = np.column_stack((isSmallBlindPlayer, bettingRound, #equities, #availableActionsNormalized,
+        features = np.column_stack((isSmallBlindPlayer, bettingRound, equities, #availableActionsNormalized,
                                     potsNormalized, ownStacksNormalized, opponentStacksNormalized,
                                     boardcardSuitsOnehot, boardcardRanksOnehot, holecardSuitsOnehot, 
                                     holecardRanksOnehot))
