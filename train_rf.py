@@ -9,10 +9,20 @@ Created on Thu May  9 18:23:25 2019
         
 
 import numpy as np
+from numba import jit
 
 from holdem_hu_bot.agents import RndAgent, Agent
 from holdem_hu_bot.features_rf import RfFeatures
 from texas_hu_engine.wrappers import initRandomGames, executeActions, createActionsToExecute
+
+
+@jit(nopython=True, cache=True, fastmath=True, nogil=True)
+def genIntervals(minRaise, maxRaise, N):
+    intervals = np.zeros((len(minRaise),N), dtype=minRaise.dtype)
+    for i in range(len(minRaise)):
+        intervals[i,:] = np.linspace(minRaise[i], maxRaise[i], N)
+    
+    return intervals
 
 
 class RfAgent(Agent):
@@ -22,96 +32,72 @@ class RfAgent(Agent):
         self.rfFeatures = rfFeatures
         self.model = model
         
+        
     def getActions(self, gameStates):
-        allMask, actingPlayerMask, gameEndMask, gameFailedMask = super().getMasks(gameStates)
+        mask, actingPlayerMask, gameEndMask, gameFailedMask = super().getMasks(gameStates)
         model = self.model
         rfFeatures = self.rfFeatures
         playerNum = self.playerNumber
         
-        # Return if all hands are finished for the current player
-        if(np.sum(allMask) == 0):
-            return np.zeros((0,2), dtype=np.int64), allMask
+        # Return if all hands are already finished for the current player
+        if(np.sum(mask) == 0):
+            return np.zeros((0,2), dtype=np.int64), mask
         
-#        allMask, _, _, _ = agents[1].getMasks(gameStates)
+#        mask, _, _, _ = agents[1].getMasks(gameStates)
 #        model = regressor
 #        playerNum = agents[1].playerNumber
         
-        playersData = rfFeatures.flattenPlayersData(gameStates.players)
-        availableActs = gameStates.availableActions
-        features, miscDict = rfFeatures.computeFeatures(gameStates.boards, playersData, availableActs, 
-                                                        gameStates.controlVariables, 
-                                                        np.arange(len(playersData)))
+        playersData = rfFeatures.flattenPlayersData(gameStates.players)[mask]
+        boardsData = gameStates.boards[mask]
+        availableActs = gameStates.availableActions[mask]
+        gameNums = np.nonzero(mask)[0]
+        
+        features, miscDict = rfFeatures.computeFeatures(boardsData, playersData, availableActs, 
+                                                        gameStates.controlVariables[mask], gameNums)
 
         availableActsNormalized = miscDict['availableActionsNormalized']
         
         # Call and raise amounts
-        amounts, amountsNormalized, gameNums = [], [], []
-        for i in range(len(availableActsNormalized)):
-            
-            if(allMask[i] == False):
-                continue
-            
-            callAmountNorm = availableActsNormalized[i,0]
-            minRaiseNorm = availableActsNormalized[i,1]
-            maxRaiseNorm = availableActsNormalized[i,2]
+        N = 5
+        amounts = np.zeros((len(features),6), dtype=np.int)
+        amountsNormalized = np.zeros((len(features),6))
+        
+        callAmountNorm = availableActsNormalized[:,0]
+        minRaiseNorm = availableActsNormalized[:,1]
+        maxRaiseNorm = availableActsNormalized[:,2]
+        amountsNormalized[:,0] = callAmountNorm
+        amountsNormalized[:,1:] = genIntervals(minRaiseNorm, maxRaiseNorm, N)
+        
+        callAmount = availableActs[:,0]
+        minRaise = availableActs[:,1]
+        maxRaise = availableActs[:,2]
+        amounts[:,0] = callAmount
+        amounts[:,1:] = genIntervals(minRaise, maxRaise, N)
 
-            callAmount = availableActs[i,0]
-            minRaise = availableActs[i,1]
-            maxRaise = availableActs[i,2]
-            
-#            print('....')
-#            print(callAmountNorm, minRaiseNorm, maxRaiseNorm)
-        
-            N = 5
-            amountsNormalized.append([callAmountNorm])
-            amountsNormalized.append(np.linspace(minRaiseNorm, maxRaiseNorm, num=N))
-            gameNums.append(np.full(N+1, i, dtype=np.int))
-            
-            amounts.append([callAmount])
-            amounts.append(np.linspace(minRaise, maxRaise, num=N).astype(np.int))
-        
-        amountsNormalized = np.concatenate(amountsNormalized)
-        amounts = np.concatenate(amounts)
-        gameNums = np.concatenate(gameNums)
-        mask = amounts < 0
+        # Predict return (win/lose amount)
+        model.verbose = 0
+        featureIndexes = np.tile(np.arange(len(amountsNormalized)), (amountsNormalized.shape[1],1)).T
+        predictedReturnsNorm = model.predict(np.column_stack((features[featureIndexes.flatten()], 
+                                                                       amountsNormalized.flatten() )))
+        predictedReturnsNorm = predictedReturnsNorm.reshape(featureIndexes.shape)
         
         # Fold amounts
-        smallBlinds = gameStates.boards[:,1]
-        pots = gameStates.boards[:,0]
+        smallBlinds = boardsData[:,1]
+        pots = boardsData[:,0]
         bets = np.column_stack((playersData[:,3], playersData[:,11]))
         bets = bets + pots.reshape(-1,1)
         foldAmounts = bets[:,playerNum] * -1
         foldAmountsNorm = foldAmounts / smallBlinds
         
-        # Predict win/lose amount        
-        model.verbose = 0
-        predictedAmounts = model.predict(np.column_stack((features[gameNums], amountsNormalized)))
-        
         # Get best action (maximum return)        
-        predictedAmounts[mask] = -9999
-        predictedAmounts = predictedAmounts.reshape((-1,N+1))
-        gameNums = gameNums.reshape((-1,N+1))[:,0]
+        predictedReturnsNorm[amounts < 0] = -9999
+        highestReturnIdx = np.argmax(np.column_stack((foldAmountsNorm, predictedReturnsNorm)),1)
+        amounts = np.column_stack((foldAmounts,amounts))
+        amounts2 = amounts[np.arange(len(highestReturnIdx)),highestReturnIdx]
+        amounts2[highestReturnIdx == 0] = -1    # Fold
         
-        tmpAmountsNorm, tmpAmounts = np.zeros((len(allMask),7)), np.zeros((len(allMask),7), dtype=np.int)
-        tmpAmountsNorm[:,0] = foldAmountsNorm
-        tmpAmountsNorm[gameNums,1:] = predictedAmounts
-        tmpAmounts[:,0] = foldAmounts
-        tmpAmounts[gameNums,1:] = amounts.reshape((-1,N+1))
+        return createActionsToExecute(amounts2), mask
         
-        actionAmountIdx = np.argmax(tmpAmountsNorm, 1)
-        actionAmounts = tmpAmounts[np.arange(len(actionAmountIdx)),actionAmountIdx]
-        actionAmounts[actionAmountIdx == 0] = -1    # if fold
-        
-        return createActionsToExecute(actionAmounts[allMask]), allMask
-        
-
-#rfAgent1 = RfAgent(0, rfFeatures, regressor)
-#rfAgent2 = RfAgent(1, rfFeatures, regressor)
-#
-#acts, mask = rfAgent1.getActions(gameStates)
-#acts1, mask1 = rfAgent2.getActions(gameStates)
-
-
 
 def getWinAmountsForFeatures(winAmounts, winPlayerIdx, actingPlayerIdx, gameNumsWinAmounts, gameNumsFeatures, 
                              executedActions, clippingThres=50):
@@ -142,13 +128,19 @@ def getWinAmountsForFeatures(winAmounts, winPlayerIdx, actingPlayerIdx, gameNums
 # %%
 # Run random games to initialize random forest agent
 
-nGames = 10000
+# 
+
+nGames = 100000
 
 gameStates = initRandomGames(nGames)
 rfFeatures = RfFeatures(gameStates)
 
 #agents = [RndAgent(0), RfAgent(1, rfFeatures, regressor)]
-agents = [RfAgent(0, rfFeatures, regressor), RfAgent(1, rfFeatures, regressor)]
+
+#agents = [RfAgent(0, rfFeatures, regressor), RfAgent(1, rfFeatures, regressor)]
+#agents = [RfAgent(0, rfFeatures, regressorOld), RfAgent(1, rfFeatures, regressor)]
+#agents = [RfAgent(0, rfFeatures, regressor0), RfAgent(1, rfFeatures, regressor)]
+
 #agents = [RndAgent(0), RndAgent(1)]
 
 
@@ -173,8 +165,6 @@ while(1):
 # Save also last game state
 actionsToExecute = np.zeros((len(gameStates.availableActions),2), dtype=np.int64)-999
 rfFeatures.addData(gameStates, actionsToExecute)
-
-
 
 winAmounts, winPlayerIdx, gameNums = rfFeatures.getWinAmounts()
 
@@ -208,7 +198,7 @@ mask = ~(misc['gameFinishedMask'] | foldMask)   # If the game has ended, we have
     # outcome for that state.
     
 winAmountsFeatures = getWinAmountsForFeatures(winAmounts, winPlayerIdx, actingPlayerIdx, gameNumsWinAmounts, 
-                                              gameNumsFeatures, executedActions, clippingThres=100)
+                                              gameNumsFeatures, executedActions, clippingThres=1000)
 
 x = np.column_stack((features[mask], executedActions[mask,1]))
 y = winAmountsFeatures[mask]
@@ -216,7 +206,11 @@ y = winAmountsFeatures[mask]
 
 # %%
 
+import copy
 from sklearn.ensemble import ExtraTreesRegressor
+
+regressorOld = copy.deepcopy(regressor)
+#regressor0 = copy.deepcopy(regressor)
 
 regressor = ExtraTreesRegressor(n_estimators=100, min_samples_leaf=10, min_samples_split=10, 
                                 verbose=2, n_jobs=-1, random_state=0)
@@ -226,18 +220,6 @@ regressor.fit(x, y)
 pred = regressor.predict(x)
 np.sum(pred*y > 0) / len(pred)
 
-
-# %%
-
-ii = 0
-
-xIn = x[ii:ii+1]
-
-availAct = misc['availableActionsNormalized'][mask][ii]
-xIn[:,-1] = availAct[0]+0
-
-regressor.verbose = 0
-regressor.predict(xIn)
 
 
 
