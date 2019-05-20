@@ -40,7 +40,7 @@ class Agent(ABC):
 def generateRndActions(availableActions):
     foldProb = 0.1
     foldProbArr = np.zeros(100, dtype=np.bool_)
-#    foldProbArr[:int(foldProb*100)] = True     # TODO: uncomment
+    foldProbArr[:int(foldProb*100)] = True     # TODO: uncomment
     
     allInRaiseProb = 0.1
     allInRaiseProbArr = np.zeros(100, dtype=np.bool_)
