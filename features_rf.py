@@ -74,13 +74,35 @@ class RfFeatures(GameDataContainer):
         playersData = data['playersData'][indexes]
         availableActions = data['availableActionsData'][indexes]
         controlVariables = data['controlVariablesData'][indexes]
-#        executedActions = data['actions'][indexes]
+        executedActions = data['actions'][indexes]
         
         features, miscDict = self.computeFeatures(boardsData, playersData, availableActions, 
                                                   controlVariables, gameNumbers)
-        executedActions = self.getExecutedActionsNormalized(indexes)
+        executedActionsNormalized = self.getExecutedActionsNormalized(indexes)
         
-        return features, executedActions, miscDict
+        return features, executedActions, executedActionsNormalized, miscDict
+    
+    
+    def getFeaturesForGameNums(self, gameNums):
+        data, _ = super().getData()
+        indexes, gameNumbers = super().getIndexesForGameNums(gameNums)
+        
+        boardsData = data['boardsData'][indexes]
+        playersData = data['playersData'][indexes]
+        availableActions = data['availableActionsData'][indexes]
+        controlVariables = data['controlVariablesData'][indexes]
+        executedActions = data['actions'][indexes]
+        
+        features, miscDict = self.computeFeatures(boardsData, playersData, availableActions, 
+                                                  controlVariables, gameNumbers)
+        
+        executedActionsNormalized = self.getExecutedActionsNormalized(indexes)
+        
+        pots = boardsData[:,0]
+        bets = playersData[:,3] + playersData[:,11]
+        pots += bets
+        
+        return features, executedActions, executedActionsNormalized, pots, miscDict
     
     
     def getExecutedActionsNormalized(self, indexes):
@@ -147,7 +169,8 @@ class RfFeatures(GameDataContainer):
             equity = self.equities[curPlayerIdx][bettingRoundNames[curBettingRound]][gameNum]  
             equities[i] = equity
                     
-        miscDict = {'availableActionsNormalized':availableActionsNormalized, 'gameNumbers':gameNumbers,
+        miscDict = {'availableActionsNormalized':availableActionsNormalized, 
+                    'availableActions':availableActions, 'gameNumbers':gameNumbers,
                     'gameFinishedMask':gameFinishedMask, 'gameFailedMask':gameFailedMask, 
                     'actingPlayerIdx':actingPlayerIdx}
         

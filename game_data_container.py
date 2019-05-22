@@ -52,6 +52,15 @@ class GameDataContainer:
         indexes2 = np.concatenate(indexes)
         
         return indexes2, gameNumbers
+    
+    
+    def getIndexesForGameNums(self, gameNums):
+        _, indexes = self.getData()
+        
+        gameNumbers = np.concatenate([np.full(len(indexes[gameNum]), gameNum) for gameNum in gameNums])
+        indexes = np.concatenate(np.array(indexes)[gameNums])
+        
+        return indexes, gameNumbers
         
     
     def getWinAmounts(self):
