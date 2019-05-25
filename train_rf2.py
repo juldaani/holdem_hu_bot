@@ -20,6 +20,9 @@ from holdem_hu_bot.features_rf import RfFeatures
 from texas_hu_engine.wrappers import initRandomGames, executeActions, createActionsToExecute
 
 
+    
+
+
 
 
 class RfAgent(Agent):
@@ -148,19 +151,19 @@ features = features[mask]
 #targetActions = np.argmax(targetActions,1)
 targetActions = np.random.randint(0, high=6, size=len(features))
 
-#regressor = ExtraTreesRegressor(n_estimators=100, min_samples_leaf=10, min_samples_split=10, 
-#                                verbose=2, n_jobs=-1, random_state=0)
-#regressor = ExtraTreesClassifier(n_estimators=100, min_samples_leaf=10, min_samples_split=10, 
-#                                verbose=2, n_jobs=-1)
-#regressor.fit(features, targetActions)
+regressor = ExtraTreesRegressor(n_estimators=100, min_samples_leaf=10, min_samples_split=10, 
+                                verbose=2, n_jobs=-1, random_state=0)
+regressor = ExtraTreesClassifier(n_estimators=100, min_samples_leaf=10, min_samples_split=10, 
+                                verbose=2, n_jobs=-1)
+regressor.fit(features, targetActions)
 
-regressor = MLPClassifier(hidden_layer_sizes=(50,50), max_iter=1000, verbose=1)
-scaler = StandardScaler()
-scaler.fit(features)
-features = scaler.transform(features)
-for i in range(100):
-    regressor.partial_fit(features, targetActions, classes=np.arange(6))
-    print('Iteration: ' + str(i) + '   loss: ' + str(regressor.loss_))
+#regressor = MLPClassifier(hidden_layer_sizes=(50,50), max_iter=1000, verbose=1)
+#scaler = StandardScaler()
+#scaler.fit(features)
+#features = scaler.transform(features)
+#for i in range(100):
+#    regressor.partial_fit(features, targetActions, classes=np.arange(6))
+#    print('Iteration: ' + str(i) + '   loss: ' + str(regressor.loss_))
 
 regressor0 = copy.deepcopy(regressor)
 
@@ -220,9 +223,9 @@ def executedActionsToTargetVector(pots, availableActions, executedActions):
 
 
 
-nGames = 50000
+nGames = 10
 #seed = 5
-randomizationRatio = 0.1
+randomizationRatio = 0.6
 randomizedPlayerIdx = 0
 nonRandomizedPlayerIdx = np.abs(randomizedPlayerIdx-1)
 
@@ -233,7 +236,7 @@ agents = [RfAgent(0, initGameContainer, regressor), RfAgent(1, initGameContainer
 gamesNoRandomization = playGames(agents, copy.deepcopy(initGameStates), copy.deepcopy(initGameContainer))
 
 gamesRandomized = []
-for i in range(10):
+for i in range(5):
     print('')
     print(i)
     print('..................')
@@ -242,6 +245,7 @@ for i in range(10):
               RfAgent(nonRandomizedPlayerIdx, copy.deepcopy(initGameContainer), regressor)]
     gamesRandomized.append(playGames(agents, copy.deepcopy(initGameStates), copy.deepcopy(initGameContainer)))
     
+
 
 returnsNoRandomization = getReturnsForGames(gamesNoRandomization, randomizedPlayerIdx)
 returnsRandomized = np.column_stack(([getReturnsForGames(games, randomizedPlayerIdx) \

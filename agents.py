@@ -37,10 +37,13 @@ class Agent(ABC):
     
         
 @jit(nopython=True, cache=True, fastmath=True, nogil=True)
-def generateRndActions(availableActions):
+def generateRndActions(availableActions, seed=-1):
+    if(seed != -1):
+        np.random.seed(seed)
+    
     foldProb = 0.1
     foldProbArr = np.zeros(100, dtype=np.bool_)
-    foldProbArr[:int(foldProb*100)] = True     # TODO: uncomment
+    foldProbArr[:int(foldProb*100)] = True
     
     allInRaiseProb = 0.1
     allInRaiseProbArr = np.zeros(100, dtype=np.bool_)
@@ -75,11 +78,15 @@ def generateRndActions(availableActions):
 
 class RndAgent(Agent):
     
+    def __init__(self, playerNumber, seed=-1):
+        self.playerNumber = playerNumber
+        self.seed = seed
+    
     def getActions(self, gameStates):
         allMask, actingPlayerMask, gameEndMask, gameFailedMask = super().getMasks(gameStates)
         availableActions = gameStates.availableActions[allMask]
         
-        return generateRndActions(availableActions), allMask
+        return generateRndActions(availableActions, seed=self.seed), allMask
 
 
 

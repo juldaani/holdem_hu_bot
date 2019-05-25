@@ -38,10 +38,10 @@ class GameDataContainer:
     def getFirstIndexes(self):
         _, indexes = self.getData()
         # Get indexes for the last (the most recent) game states
-        lastIndexes = [curIndexes[0] for curIndexes in indexes]
+        firstIndexes = [curIndexes[0] for curIndexes in indexes]
         gameNumbers = [gameNum for gameNum in range(len(indexes))]
         
-        return lastIndexes, gameNumbers
+        return firstIndexes, gameNumbers
     
     
     def getAllIndexes(self):
@@ -63,25 +63,25 @@ class GameDataContainer:
         return indexes, gameNumbers
         
     
-    def getWinAmounts(self):
-        firstIndexes, gameNums = self.getFirstIndexes()
-        lastIndexes, _ = self.getLastIndexes()
-        
-        data, _ = self.getData()
-        playersData = data['playersData']
-        stacks = playersData[:,[2,10]]
-        winPlayerIdx = data['controlVariablesData'][lastIndexes,-1]
-        
-        initBets = np.column_stack((playersData[firstIndexes,3],playersData[firstIndexes,11]))
-        initStacks = stacks[firstIndexes] + initBets
-        finalStacks = stacks[lastIndexes]
-        
-        winnerInitStacks = initStacks[np.arange(len(winPlayerIdx)),winPlayerIdx]
-        winnerFinalStacks = finalStacks[np.arange(len(winPlayerIdx)),winPlayerIdx]
-        
-        winAmounts = winnerFinalStacks - winnerInitStacks
-    
-        return winAmounts, winPlayerIdx, gameNums
+#    def getWinAmounts(self):
+#        firstIndexes, gameNums = self.getFirstIndexes()
+#        lastIndexes, _ = self.getLastIndexes()
+#        
+#        data, _ = self.getData()
+#        playersData = data['playersData']
+#        stacks = playersData[:,[2,10]]
+#        winPlayerIdx = data['controlVariablesData'][lastIndexes,-1]
+#        
+#        initBets = np.column_stack((playersData[firstIndexes,3],playersData[firstIndexes,11]))
+#        initStacks = stacks[firstIndexes] + initBets
+#        finalStacks = stacks[lastIndexes]
+#        
+#        winnerInitStacks = initStacks[np.arange(len(winPlayerIdx)),winPlayerIdx]
+#        winnerFinalStacks = finalStacks[np.arange(len(winPlayerIdx)),winPlayerIdx]
+#        
+#        winAmounts = winnerFinalStacks - winnerInitStacks
+#    
+#        return winAmounts, winPlayerIdx, gameNums
     
     
     def addData(self, gameStates, actions):
