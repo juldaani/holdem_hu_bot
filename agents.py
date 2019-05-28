@@ -89,6 +89,17 @@ class RndAgent(Agent):
         return generateRndActions(availableActions, seed=self.seed), allMask
 
 
+class CallAgent(Agent):
+    
+    def __init__(self, playerNumber, seed=-1):
+        self.playerNumber = playerNumber
+    
+    def getActions(self, gameStates):
+        allMask, actingPlayerMask, gameEndMask, gameFailedMask = super().getMasks(gameStates)
+        availableActions = gameStates.availableActions[allMask]
+        
+        return createActionsToExecute(availableActions[:,0]), allMask
+
 
   
     
