@@ -126,9 +126,6 @@ def computeFeatures(boardsData, playersData, availableActions, controlVariables,
     return features#, miscDict
     
 
-# %%
-    
-
 
 class AiAgent(Agent):
     
@@ -141,6 +138,7 @@ class AiAgent(Agent):
     def getActions(self, gameStates):
         mask, _, _, _ = super().getMasks(gameStates)
         aiModel = self.aiModel
+        aiModel.verbose = 0
         featuresFunc = self.featuresFunc
         equities = self.equities
         
@@ -148,28 +146,28 @@ class AiAgent(Agent):
         if(np.sum(mask) == 0):
             return np.zeros((0,2), dtype=np.int64), mask
 
-        # %%
-
-        def getMasks(gameStates, playerNum):
-#            playerNum = self.playerNumber
-            
-            actingPlayerNum = np.argmax(gameStates.players[:,6].reshape((-1,2)),1)
-            actingPlayerMask = actingPlayerNum == playerNum
-            gameEndMask = gameStates.controlVariables[:,1] == 1
-            gameFailedMask = gameStates.controlVariables[:,1] == -999
-            allMask = actingPlayerMask & ~gameEndMask & ~gameFailedMask
-            
-            return allMask, actingPlayerMask, gameEndMask, gameFailedMask
+#        def getMasks(gameStates, playerNum):
+##            playerNum = self.playerNumber
+#            
+#            actingPlayerNum = np.argmax(gameStates.players[:,6].reshape((-1,2)),1)
+#            actingPlayerMask = actingPlayerNum == playerNum
+#            gameEndMask = gameStates.controlVariables[:,1] == 1
+#            gameFailedMask = gameStates.controlVariables[:,1] == -999
+#            allMask = actingPlayerMask & ~gameEndMask & ~gameFailedMask
+#            
+#            return allMask, actingPlayerMask, gameEndMask, gameFailedMask
+#        
+#        gameStates = initGameStates
+#        playerNum = 1
+#        mask, _, _, _ = getMasks(gameStates, playerNum)
+#        featuresFunc = computeFeatures
+#        equities = equities
+#        aiModel = regressor
         
-        gameStates = initGameStates
-        playerNum = 0
-        mask, _, _, _ = getMasks(gameStates, playerNum)
+        
+        foldThres = 0.67
+        
         playersMask = np.tile(mask, (2,1)).T.flatten()
-        featuresFunc = computeFeatures
-        equities = equities
-        aiModel = adafasfdagasdf
-        
-        
         playersData = gameStates.players[playersMask]
         boardsData = gameStates.boards[mask]
         availableActs = gameStates.availableActions[mask]
@@ -177,20 +175,31 @@ class AiAgent(Agent):
         
         features = featuresFunc(boardsData, playersData, availableActs, gameStates.controlVariables[mask],
                                 equities, gameNums)
+        actions = aiModel.predict(features)
         
+        foldMask = actions[:,0] > foldThres
         
+        smallBlinds = boardsData[:,1]
+        actionAmounts = (actions[:,1] * smallBlinds).astype(np.int)
+        validAmountsMask = (actionAmounts == availableActs[:,0]) | \
+            (actionAmounts >= availableActs[:,1]) & (actionAmounts <= availableActs[:,2])
+        closestIdx = np.argmin(np.abs(availableActs - actionAmounts.reshape((-1,1))),1)
+        invalidIdx = np.nonzero(~validAmountsMask)[0]
+        actionAmounts[~validAmountsMask] = availableActs[invalidIdx, closestIdx[invalidIdx]]
+        actionAmounts[foldMask] = -1
         
-#        return actionsADAFASDfASDF, allMask
+        return createActionsToExecute(actionAmounts), mask
 
 
 
 # %%
 
-nGames = 7
+nGames = 75000
 callPlayerIdx = 0
 rndPlayerIdx = 1
+nRandomSets = 8
 
-initGameStates, initStacks = initRandomGames(nGames, seed=767)
+initGameStates, initStacks = initRandomGames(nGames, seed=76)
 equities = getEquities(initGameStates)
 
 gameCont = GameDataContainer(nGames)
@@ -200,44 +209,149 @@ gameCont = GameDataContainer(nGames)
 #agents = [CallAgent(0), RndAgent(1, seed=np.random.randint(1,10000))]
 agents = [CallAgent(callPlayerIdx), RndAgent(rndPlayerIdx)]
 
-gameContainers = [playGames(agents, copy.deepcopy(initGameStates), copy.deepcopy(gameCont)) for i in range(5)]
+gameContainers = [playGames(agents, copy.deepcopy(initGameStates), copy.deepcopy(gameCont)) \
+    for i in range(nRandomSets)]
 
 # %%
 
-#winAmounts = getWinAmounts(gameContainers[0], initStacks)
-#print(winAmounts)
 winAmounts = [getWinAmounts(c, initStacks)[:,rndPlayerIdx] for c in gameContainers]
 winAmounts = np.column_stack((winAmounts))
 
-highestReturnIdx = np.argmax(winAmounts,1)
+highestReturnGameContainerIdx = np.argmax(winAmounts,1)
+gameNums = np.arange(nGames)
+gameNumsForGameContainers, winAmounts2 = [[] for i in range(nRandomSets)], [[] for i in range(nRandomSets)] 
+for idx, gameNum in zip(highestReturnGameContainerIdx, gameNums):
+    gameNumsForGameContainers[idx].append(gameNum)
+    winAmounts2[idx].append(winAmounts[gameNum,idx])
+
+boardsData, playersData, availableActions, controlVariables, actions, gameNumbers, winAmounts3 = \
+    [], [], [], [], [], [], []
+for gameNum, winAmount, containerNum in zip(gameNumsForGameContainers, winAmounts2, 
+                                            np.arange(len(winAmounts2))):
+    if(len(gameNum) > 0):
+        tmpIndexes, tmpGameNumbers = gameContainers[containerNum].getIndexesForGameNums(gameNum)
+        data, _ = gameContainers[containerNum].getData()
+        boardsData.append(data['boardsData'][tmpIndexes])
+        playersData.append(data['playersData'][tmpIndexes])
+        availableActions.append(data['availableActionsData'][tmpIndexes])
+        controlVariables.append(data['controlVariablesData'][tmpIndexes])
+        actions.append(data['actions'][tmpIndexes])
+        gameNumbers.append(tmpGameNumbers)
+        winAmountDict = {gameN:winAmnt for winAmnt, gameN in zip(winAmount, gameNum)}
+        winAmounts3.append([winAmountDict[gameN] for gameN in tmpGameNumbers])
+
+boardsData = np.row_stack(boardsData)
+playersData = np.row_stack(playersData)
+availableActions = np.row_stack(availableActions)
+controlVariables = np.row_stack(controlVariables)
+actions = np.row_stack(actions)
+gameNumbers = np.concatenate(gameNumbers)
+winAmounts3 = np.concatenate(winAmounts3)
 
 
-print(np.sum(np.max(winAmounts, 1)))
-np.max(winAmounts, 1)
+# %%
 
-#initGameStates.boards[:,1]
+gameNotEndMask = ~(controlVariables[:,1] != 0)
+
+boardsData = boardsData[gameNotEndMask]
+playersData = GameDataContainer.unflattenPlayersData(playersData[gameNotEndMask])
+availableActions = availableActions[gameNotEndMask]
+controlVariables = controlVariables[gameNotEndMask]
+actions = actions[gameNotEndMask]
+gameNumbers = gameNumbers[gameNotEndMask]
+winAmounts3 = winAmounts3[gameNotEndMask]
+
+features = computeFeatures(boardsData, playersData, availableActions, controlVariables, equities, gameNumbers)
 
 
+# %%
+
+actingPlayerIdx = playersData[1::2,6]
+rndPlayerMask = actingPlayerIdx == rndPlayerIdx
+
+smallBlinds = boardsData[:,1]
+targetActions = actions / np.row_stack(smallBlinds)
+targetActions[actions == -1] = 0
+targetActions[actions[:,0] == 1] = [1,0]
+
+# Upsample folds
+upsampleRatio = 10
+foldMask = actions[:,0] == 1
+foldFeatures = np.tile(features[foldMask], (upsampleRatio,1))
+foldTargetActions = np.tile(targetActions[foldMask], (upsampleRatio,1))
+
+x = np.row_stack((features[rndPlayerMask],foldFeatures))
+y = np.row_stack((targetActions[rndPlayerMask],foldTargetActions))
+shuffler = np.arange(len(x))
+np.random.shuffle(shuffler)
+
+regressor = ExtraTreesRegressor(n_estimators=100, min_samples_leaf=10, min_samples_split=4, 
+                                verbose=2, n_jobs=-1)
+regressor.fit(x[shuffler], y[shuffler])
 
 
 
 # %%
 
-data, _ = gameContainers[0].getData()
-data1, _ = gameContainers[1].getData()
 
-i, _ = gameContainers[0].getFirstIndexes()
-i1, _ = gameContainers[1].getFirstIndexes()
-#i, _ = gameContainers[0].getLastIndexes()
-#i1, _ = gameContainers[1].getLastIndexes()
+nGames = 50000
+callPlayerIdx = 0
+aiPlayerIdx = 1
 
-assert np.all(data['playersData'][i] == data1['playersData'][i1])
-assert np.all(data['boardsData'][i] == data1['boardsData'][i1])
-assert np.all(data['availableActionsData'][i] == data1['availableActionsData'][i1])
-assert np.all(data['controlVariablesData'][i] == data1['controlVariablesData'][i1])
+initGameStates, initStacks = initRandomGames(nGames)
+smallBlinds = initGameStates.boards[:,1]
+equities = getEquities(initGameStates)
+
+gameCont = GameDataContainer(nGames)
+agents = [CallAgent(callPlayerIdx), AiAgent(aiPlayerIdx, computeFeatures, regressor, equities)]
+gameCont = playGames(agents, copy.deepcopy(initGameStates), copy.deepcopy(gameCont))
+
+
+winAmounts = getWinAmounts(gameCont, initStacks)[:,aiPlayerIdx]
+winAmountsNormalized = winAmounts / smallBlinds
+
+winRateSmallBlindsPerGame = np.sum(winAmountsNormalized) / nGames
+
+print('win rate: ' + str(winRateSmallBlindsPerGame) + ' small blinds / hand')
+
 
 
 # %%
+
+import matplotlib.pyplot as plt
+
+
+preds = regressor.predict(features[rndPlayerMask])
+
+#asd = np.column_stack((preds, targetActions[rndPlayerMask], features[rndPlayerMask,2]))
+
+m = targetActions[rndPlayerMask,0] == 1
+
+np.mean(preds[m,0])
+np.percentile(preds[m,0], 15)
+
+np.mean(preds[~m,0])
+np.percentile(preds[~m,0], 97)
+
+
+plt.hist(preds[m,0], 20, alpha=0.5, color='red')
+plt.hist(preds[~m,0], 40, alpha=0.5, color='blue')
+plt.show()
+
+
+# %%
+
+ii = 20
+plt.plot(asd[ii::100,-1]-np.mean(asd[ii::100,-1]))
+plt.plot(asd[ii::100,0]-np.mean(asd[ii::100,0]))
+
+
+
+
+
+
+
+
 
 
 

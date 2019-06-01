@@ -25,6 +25,15 @@ class GameDataContainer:
         
         return flattenedData
     
+    @staticmethod
+    def unflattenPlayersData(playersData):
+        playersData2 = np.zeros((int(playersData.shape[0]*2),int(playersData.shape[1]/2)), 
+                                dtype=playersData.dtype)
+        playersData2[::2] = playersData[:,:8]
+        playersData2[1::2] = playersData[:,8:]
+        
+        return playersData2
+    
     
     def getLastIndexes(self):
         _, indexes = self.getData()
