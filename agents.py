@@ -37,15 +37,13 @@ class Agent(ABC):
     
         
 @jit(nopython=True, cache=True, fastmath=True, nogil=True)
-def generateRndActions(availableActions, seed=-1):
+def generateRndActions(availableActions, foldProb=0.1, allInRaiseProb=0.1, seed=-1):
     if(seed != -1):
         np.random.seed(seed)
     
-    foldProb = 0.1
     foldProbArr = np.zeros(100, dtype=np.bool_)
     foldProbArr[:int(foldProb*100)] = True
     
-    allInRaiseProb = 0.1
     allInRaiseProbArr = np.zeros(100, dtype=np.bool_)
     allInRaiseProbArr[:int(allInRaiseProb*100)] = True
     
