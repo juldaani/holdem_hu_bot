@@ -229,10 +229,10 @@ regressor.fit(features, data['actions'])
 # %%
 # Self-play
 
-nGames = 50000
+nGames = 10000
 playerIdxToOptimize = 1
 nOptimizationRounds = 5
-foldThres = 0.9
+foldThres = 0.95
 
 initGameStates, initStacks = initRandomGames(nGames)
 smallBlinds = initGameStates.boards[:,1]
@@ -246,7 +246,7 @@ gameDataOriginal = playGames(agents, copy.deepcopy(initGameStates), copy.deepcop
 
 agents = [AiAgent(0, computeFeatures, regressor, equities, foldThres), 
           AiAgent(playerIdxToOptimize, computeFeatures, regressor, equities, foldThres, 
-                  randomizationRatio=0.25)]
+                  randomizationRatio=0.1)]
 gameDataRandomized = [playGames(agents, copy.deepcopy(initGameStates), copy.deepcopy(gameDataCont)) \
     for i in range(nOptimizationRounds)]
 
@@ -259,6 +259,7 @@ gameDataRandomized.append(gameDataOriginal)
 
 winAmounts = [getWinAmounts(c, initStacks)[:,playerIdxToOptimize] for c in gameDataRandomized]
 winAmounts = np.column_stack((winAmounts))
+winAmounts = winAmounts / smallBlinds.reshape((-1,1))
 
 highestReturnGameContainerIdx = np.argmax(winAmounts,1)
 gameNums = np.arange(nGames)
@@ -295,7 +296,7 @@ winAmounts3 = np.concatenate(winAmounts3)
 winAmountsOriginal = getWinAmounts(gameDataOriginal, initStacks)[:,playerIdxToOptimize]
 winAmountOptimized = winAmounts[np.arange(len(winAmounts)), highestReturnGameContainerIdx]
 print('\nwin amounts original: ' + str(np.sum(winAmountsOriginal/smallBlinds)/nGames))
-print('win amounts optimized: ' + str(np.sum(winAmountOptimized/smallBlinds)/nGames))
+print('win amounts optimized: ' + str(np.sum(winAmountOptimized)/nGames))
 
 ## %%
 
@@ -324,7 +325,7 @@ targetActions[actions == -1] = 0
 targetActions[actions[:,0] == 1] = [1,0]
 
 # Upsample folds
-upsampleRatio = 1
+upsampleRatio = 5
 foldMask = actions[:,0] == 1
 foldFeatures = np.tile(features[foldMask], (upsampleRatio,1))
 foldTargetActions = np.tile(targetActions[foldMask], (upsampleRatio,1))
@@ -352,6 +353,9 @@ plt.hist(preds[~m,0], 40, alpha=0.5, color='blue')
 plt.show()
 
 
+#plt.hist(preds[:,0], 30, alpha=0.5, color='red')
+
+
 
 # %%
 # Evaluate
@@ -365,11 +369,11 @@ smallBlinds = initGameStates.boards[:,1]
 equities = getEquities(initGameStates, seed=seed)
 
 gameCont = GameDataContainer(nGames)
-agents = [AiAgent(0, computeFeatures, regressorOld, equities, 0.9),
-          AiAgent(playerIdxToOptimize, computeFeatures, regressor, equities, 0.9)]
-#agents = [RndAgent(0),
-#agents = [CallAgent(0),
-#          AiAgent(playerIdxToOptimize, computeFeatures, regressor, equities, 0.9)]
+agents = [AiAgent(0, computeFeatures, regressorOld, equities, 0.95),
+          AiAgent(playerIdxToOptimize, computeFeatures, regressor, equities, 0.95)]
+#agents = [RndAgent(0), AiAgent(playerIdxToOptimize, computeFeatures, regressor, equities, 0.95)]
+#agents = [CallAgent(0), AiAgent(playerIdxToOptimize, computeFeatures, regressor, equities, 0.9)]
+          
 gameCont = playGames(agents, copy.deepcopy(initGameStates), copy.deepcopy(gameCont))
 
 
