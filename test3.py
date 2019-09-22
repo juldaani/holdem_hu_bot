@@ -206,11 +206,11 @@ class AiAgent(Agent):
 # %%
 # Initialize agent
 
-nGames = 1000
+nGames = 100000
 
 initGameStates, initStacks = initRandomGames(nGames)
 smallBlinds = initGameStates.boards[:,1]
-equities = getEquities(initGameStates)
+#equities = getEquities(initGameStates)
 
 gameDataCont = GameDataContainer(nGames)
 agents = [RndAgent(0), RndAgent(1)]
@@ -231,21 +231,26 @@ regressor.fit(features, data['actions'])
 # %%
 
 
-def computeFeatures(boardsData, playersData):#, availableActions, controlVariables, equities,
+def computeFeatures(boardsData, playersData, winLen):#, availableActions, controlVariables, equities,
                     #gameNumbers):
-#    boardsData = initGameStates.boards
-#    playersData = initGameStates.players
+    
+#    winLen = WIN_LEN
+#    boardsData = boardsData[curGameDataIdx]
+#    playersData = gameDataContainer.unflattenPlayersData(playersData[curGameDataIdx])
 #    availableActions = initGameStates.availableActions
 #    controlVariables = initGameStates.controlVariables
 #    equities = equities
 #    gameNumbers = np.arange(len(boardsData))
     
+    eventFeats = np.zeros((4,winLen))
+    
     smallBlinds = boardsData[:,1] # Small blinds amounts are used for normalization
-    actingPlayerIdx = playersData[1::2,6]
+#    playerIndexes = playersData[1::2,6]
+    actingPlayerIdx = playersData[-1,6]
     nonActingPlayerIdx = (~actingPlayerIdx.astype(np.bool)).astype(np.int)
     
-    isPlayerSmallBlind = np.column_stack((playersData[::2,4],playersData[1::2,4]))
-    isPlayerSmallBlind = isPlayerSmallBlind[np.arange(len(actingPlayerIdx)), actingPlayerIdx]
+#    isPlayerSmallBlind = np.column_stack((playersData[::2,4],playersData[1::2,4]))
+#    isPlayerSmallBlind = isPlayerSmallBlind[np.arange(len(actingPlayerIdx)), actingPlayerIdx]
     
     # Pots, stacks etc. money stuffs
     pots = boardsData[:,0]
@@ -256,14 +261,21 @@ def computeFeatures(boardsData, playersData):#, availableActions, controlVariabl
     # Normalized pots and stacks
     potsNormalized = pots / smallBlinds
     stacksNormalized = stacks / smallBlinds.reshape((-1,1))
-    ownStacksNormalized = stacksNormalized[np.arange(len(stacks)), actingPlayerIdx]
-    opponentStacksNormalized = stacksNormalized[np.arange(len(stacks)), nonActingPlayerIdx]
+    
+    ownStacksNormalized = stacksNormalized[:, actingPlayerIdx]
+    opponentStacksNormalized = stacksNormalized[:, nonActingPlayerIdx]
     
     # Betting round
     visibleCardsMask = boardsData[:,3:8].astype(np.bool)
-    bettingRound = visibleCardsMask[:,2:].astype(np.int)
-    bettingRoundIdx = np.sum(bettingRound,1)
+    bettingRound = np.sum(visibleCardsMask[:,2:].astype(np.int),1)
     
+    # Put features into array
+    idx = min(len(potsNormalized), winLen)
+    eventFeats[0, -idx:] = ownStacksNormalized[-idx:]
+    eventFeats[1, -idx:] = opponentStacksNormalized[-idx:]
+    eventFeats[2, -idx:] = potsNormalized[-idx:]
+    eventFeats[3, -idx:] = bettingRound[-idx:]+1    # Add 1 so we make difference to default value 0
+
     # Equities
 #    actingPlayerEquities = equities[gameNumbers,bettingRoundIdx,actingPlayerIdx]
     
@@ -283,34 +295,32 @@ def computeFeatures(boardsData, playersData):#, availableActions, controlVariabl
 
 #    return features#, miscDict
 
-    return potsNormalized, ownStacksNormalized, opponentStacksNormalized, bettingRoundIdx
+    return eventFeats
 
 
-# 
+# pot, stacks, bettingRound
 
+WIN_LEN = 20
 
 gameDataIndexes, gameNums = gameDataContainer.getAllIndexes()
 gameData, _ = gameDataContainer.getData()
 boardsData, playersData = gameData['boardsData'], gameData['playersData']
 
-
 _, uIdx  = np.unique(gameNums, return_index=1)
 uIdx = np.concatenate((uIdx,[len(gameNums)]))   # Add last
+
+gameEventFeatures = np.zeros((len(uIdx)-1, 4, WIN_LEN))
 
 for i in range(1,len(uIdx)):
     prevIdx, curIdx = uIdx[i-1], uIdx[i]
 
     curGameDataIdx = gameDataIndexes[prevIdx:curIdx]
     
+    tmpPlayersData = gameDataContainer.unflattenPlayersData(playersData[curGameDataIdx])
+    tmpEventFeats = computeFeatures(boardsData[curGameDataIdx], tmpPlayersData, WIN_LEN)
     
-    potsNormalized, ownStacksNormalized, opponentStacksNormalized, bettingRoundIdx = \
-        computeFeatures(boardsData[curGameDataIdx], 
-                        gameDataContainer.unflattenPlayersData(playersData[curGameDataIdx]))
+    gameEventFeatures[i-1] = tmpEventFeats
     
-    
-    asd = gameDataContainer.unflattenPlayersData(playersData[curGameDataIdx])
-    asd[1::2,6]
-    asd[1::2]
 
 
 
