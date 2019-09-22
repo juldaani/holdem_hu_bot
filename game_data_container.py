@@ -46,7 +46,7 @@ class GameDataContainer:
     
     def getFirstIndexes(self):
         _, indexes = self.getData()
-        # Get indexes for the last (the most recent) game states
+        # Get indexes for the first game states
         firstIndexes = [curIndexes[0] for curIndexes in indexes]
         gameNumbers = [gameNum for gameNum in range(len(indexes))]
         
