@@ -66,10 +66,10 @@ def getEquities(gameStates, seed=-1):
     
     # Dimensions, 1: game number, 2: preflop/flop/turn/river, 3: player index
     equities = np.zeros((len(initGameStates.boards),4,2))
-    equities[:,0,0], equities[:,1,0], equities[:,2,0], equities[:,3,0] = computeEquities(player0HoleCards,
-            boardCards, seed=seed)
-    equities[:,0,1], equities[:,1,1], equities[:,2,1], equities[:,3,1] = computeEquities(player1HoleCards,
-            boardCards, seed=seed)
+    equities[:,0,0], equities[:,1,0], equities[:,2,0], equities[:,3,0] = \ 
+        computeEquities(player0HoleCards, boardCards, seed=seed)
+    equities[:,0,1], equities[:,1,1], equities[:,2,1], equities[:,3,1] = \
+        computeEquities(player1HoleCards, boardCards, seed=seed)
 
     return equities
 
@@ -130,7 +130,8 @@ def computeFeatures(boardsData, playersData, availableActions, controlVariables,
 
 class AiAgent(Agent):
     
-    def __init__(self, playerNumber, featuresFunc, aiModel, equities, foldThres, randomizationRatio=0.0):
+    def __init__(self, playerNumber, featuresFunc, aiModel, equities, foldThres, 
+                 randomizationRatio=0.0):
         self.playerNumber = playerNumber
         self.featuresFunc = featuresFunc
         self.aiModel = aiModel
@@ -177,8 +178,8 @@ class AiAgent(Agent):
         availableActs = gameStates.availableActions[mask]
         gameNums = np.nonzero(mask)[0]
         
-        features = featuresFunc(boardsData, playersData, availableActs, gameStates.controlVariables[mask],
-                                equities, gameNums)
+        features = featuresFunc(boardsData, playersData, availableActs, 
+                                gameStates.controlVariables[mask], equities, gameNums)
         actions = aiModel.predict(features)
         
         foldMask = actions[:,0] > foldThres
@@ -216,7 +217,8 @@ agents = [RndAgent(0), RndAgent(1)]
 gameDataContainer = playGames(agents, copy.deepcopy(initGameStates), copy.deepcopy(gameDataCont))
 
 data, _ = gameDataContainer.getData()
-features = computeFeatures(data['boardsData'], GameDataContainer.unflattenPlayersData(data['playersData']),
+features = computeFeatures(data['boardsData'], 
+                           GameDataContainer.unflattenPlayersData(data['playersData']),
                            data['availableActionsData'], data['controlVariablesData'], equities,
                            np.random.randint(0, high=nGames, size=len(data['boardsData'])))
 
@@ -229,14 +231,15 @@ regressor.fit(features, data['actions'])
 # %%
 # Self-play
 
-nGames = 10000
+nGames = 20000
 playerIdxToOptimize = 1
 nOptimizationRounds = 5
-foldThres = 0.95
+foldThres = 0.8
+seed = -1
 
-initGameStates, initStacks = initRandomGames(nGames)
+initGameStates, initStacks = initRandomGames(nGames, seed=seed)
 smallBlinds = initGameStates.boards[:,1]
-equities = getEquities(initGameStates, seed=1234)
+equities = getEquities(initGameStates, seed=seed)
 
 gameDataCont = GameDataContainer(nGames)
 
@@ -246,7 +249,7 @@ gameDataOriginal = playGames(agents, copy.deepcopy(initGameStates), copy.deepcop
 
 agents = [AiAgent(0, computeFeatures, regressor, equities, foldThres), 
           AiAgent(playerIdxToOptimize, computeFeatures, regressor, equities, foldThres, 
-                  randomizationRatio=0.1)]
+                  randomizationRatio=0.7)]
 gameDataRandomized = [playGames(agents, copy.deepcopy(initGameStates), copy.deepcopy(gameDataCont)) \
     for i in range(nOptimizationRounds)]
 
@@ -254,7 +257,7 @@ gameDataRandomized = [playGames(agents, copy.deepcopy(initGameStates), copy.deep
 gameDataRandomized.append(gameDataOriginal)
 
 
-# %%
+## %%
 # Create training data
 
 winAmounts = [getWinAmounts(c, initStacks)[:,playerIdxToOptimize] for c in gameDataRandomized]
@@ -310,10 +313,11 @@ actions = actions[gameNotEndMask]
 gameNumbers = gameNumbers[gameNotEndMask]
 winAmounts3 = winAmounts3[gameNotEndMask]
 
-features = computeFeatures(boardsData, playersData, availableActions, controlVariables, equities, gameNumbers)
+features = computeFeatures(boardsData, playersData, availableActions, controlVariables, equities, 
+                           gameNumbers)
 
 
-# %%
+## %%
 # Train regressor
 
 actingPlayerIdx = playersData[1::2,6]
@@ -352,7 +356,6 @@ plt.hist(preds[m,0], 20, alpha=0.5, color='red')
 plt.hist(preds[~m,0], 40, alpha=0.5, color='blue')
 plt.show()
 
-
 #plt.hist(preds[:,0], 30, alpha=0.5, color='red')
 
 
@@ -362,17 +365,17 @@ plt.show()
 
 nGames = 10000
 seed = 12445
-#seed = np.random.randint(456488)
+seed = np.random.randint(456488)
 
 initGameStates, initStacks = initRandomGames(nGames, seed=seed)
 smallBlinds = initGameStates.boards[:,1]
 equities = getEquities(initGameStates, seed=seed)
 
 gameCont = GameDataContainer(nGames)
-agents = [AiAgent(0, computeFeatures, regressorOld, equities, 0.95),
-          AiAgent(playerIdxToOptimize, computeFeatures, regressor, equities, 0.95)]
-#agents = [RndAgent(0), AiAgent(playerIdxToOptimize, computeFeatures, regressor, equities, 0.95)]
-#agents = [CallAgent(0), AiAgent(playerIdxToOptimize, computeFeatures, regressor, equities, 0.9)]
+agents = [AiAgent(0, computeFeatures, regressorOld, equities, 0.8),
+          AiAgent(playerIdxToOptimize, computeFeatures, regressor, equities, 0.8)]
+#agents = [RndAgent(0), AiAgent(playerIdxToOptimize, computeFeatures, regressor, equities, 0.8)]
+#agents = [CallAgent(0), AiAgent(playerIdxToOptimize, computeFeatures, regressor, equities, 0.8)]
           
 gameCont = playGames(agents, copy.deepcopy(initGameStates), copy.deepcopy(gameCont))
 
