@@ -7,6 +7,7 @@ Created on Sat Apr 13 18:30:35 2019
 """
 
 import numpy as np
+from numba import jit
 from hand_eval.params import cardToInt, intToCard
 
 
@@ -23,6 +24,19 @@ def getCardOneHotLuts():
         ranksOnehotLut[cardNum] = [rank in card for rank in ranks]
 
     return suitsOnehotLut, ranksOnehotLut
+
+
+
+@jit(nopython=True, cache=True, fastmath=True, nogil=True)
+def encodeCardsOnehotNb(cards, visibleCardsMask, ranksOnehotLut, suitsOnehotLut):
+    cardRanksOnehot = np.zeros((len(cards),cards.shape[1],ranksOnehotLut.shape[1]))
+    cardSuitsOnehot = np.zeros((len(cards),cards.shape[1],suitsOnehotLut.shape[1]))
+
+    for i in range(len(cards)):
+        cardRanksOnehot[i] = ranksOnehotLut[cards[i]]
+        cardSuitsOnehot[i] = suitsOnehotLut[cards[i]]
+        
+    return cardSuitsOnehot, cardRanksOnehot
 
 
 def encodeCardsOnehot(cards, visibleCardsMask, ranksOnehotLut, suitsOnehotLut):
