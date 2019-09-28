@@ -9,7 +9,7 @@ Created on Sat May 25 23:08:15 2019
 
 
 import numpy as np
-from numba import jit, prange
+from numba import jit, njit, prange
 import copy
 from sklearn.ensemble import ExtraTreesRegressor, ExtraTreesClassifier
 from sklearn.preprocessing import StandardScaler
@@ -167,7 +167,6 @@ def computeFeaturesNb(boardsData, playersData, winLen, ranksOnehotLut, suitsOneh
     eventFeats[4, -idx:] = potsNormalized
     eventFeats[5, -idx:] = bettingRound+1    # Add 1 so we make difference to default value 0
 
-    
     # Encode cards one hot
     boardCards = boardsData[-1,8:].reshape((1,-1))
 #    boardCards[boardCards == -999] = 0  # Assign zero if failure code because otherwise 
@@ -187,56 +186,174 @@ def computeFeaturesNb(boardsData, playersData, winLen, ranksOnehotLut, suitsOneh
         holecardRanksOnehot[0]
 
 
-@jit(nopython=True, parallel=True, fastmath=True, nogil=True)
-def computeFeaturesWrapperNb(boardsData, playersData, gameDataIndexes, idxIdx):
-    features = np.zeros((len(idxIdx)-1, 7, WIN_LEN+17), dtype=np.float32)
-    for i in prange(1,len(idxIdx)):
-        prevIdx, curIdx = idxIdx[i-1], idxIdx[i]
-        curGameDataIdx = gameDataIndexes[prevIdx:curIdx]
-    
-        eventFeats, boardSuits, boardRanks, holeSuits, holeRanks \
-            = computeFeaturesNb(boardsData[curGameDataIdx], playersData[curGameDataIdx], 
-                                WIN_LEN, ranksOnehotLut, suitsOnehotLut)
-        
-        features[i-1,:eventFeats.shape[0],:eventFeats.shape[1]] = eventFeats
-        
-        features[i-1,:2,eventFeats.shape[1]:eventFeats.shape[1]+4] = holeSuits
-        features[i-1,2:,eventFeats.shape[1]:eventFeats.shape[1]+4] = boardSuits
-        features[i-1,:2,eventFeats.shape[1]+4:] = holeRanks
-        features[i-1,2:,eventFeats.shape[1]+4:] = boardRanks
-
-    return features
+#@jit(nopython=True, parallel=True, fastmath=True, nogil=True)
+#def computeFeaturesWrapperNb(boardsData, playersData, gameDataIndexes, idxIdx, winLen):
+#    features = np.zeros((len(idxIdx)-1, 7, winLen+17), dtype=np.float32)
+#    
+#    for i in prange(1,len(idxIdx)):
+#        prevIdx, curIdx = idxIdx[i-1], idxIdx[i]
+#        curGameDataIdx = gameDataIndexes[prevIdx:curIdx]
+#    
+#        eventFeats, boardSuits, boardRanks, holeSuits, holeRanks \
+#            = computeFeaturesNb(boardsData[curGameDataIdx], playersData[curGameDataIdx], 
+#                                winLen, ranksOnehotLut, suitsOnehotLut)
+#        
+#        features[i-1,:eventFeats.shape[0],:eventFeats.shape[1]] = eventFeats
+#        
+#        features[i-1,:2,eventFeats.shape[1]:eventFeats.shape[1]+4] = holeSuits
+#        features[i-1,2:,eventFeats.shape[1]:eventFeats.shape[1]+4] = boardSuits
+#        features[i-1,:2,eventFeats.shape[1]+4:] = holeRanks
+#        features[i-1,2:,eventFeats.shape[1]+4:] = boardRanks
+#
+#    return features
 
 
 # %%
 # Initialize agent
 
-nGames = 10000
+N_GAMES = 10
+RND_AGENT_NUM = 0
+AI_AGENT_NUM = np.abs(RND_AGENT_NUM-1)
+SEED = 123
+WIN_LEN = 20
 
-initGameStates, initStacks = initRandomGames(nGames)
+initGameStates, initStacks = initRandomGames(N_GAMES)
 smallBlinds = initGameStates.boards[:,1]
 #equities = getEquities(initGameStates)
 
-gameDataCont = GameDataContainer(nGames)
-agents = [RndAgent(0), RndAgent(1)]
-gameDataContainer = playGames(agents, copy.deepcopy(initGameStates), copy.deepcopy(gameDataCont))
+gameDataContainer = GameDataContainer(N_GAMES)
+#agents = [RndAgent(0), RndAgent(1)]
+#gameDataContainer = playGames(agents, copy.deepcopy(initGameStates), copy.deepcopy(gameDataCont))
 
-data, _ = gameDataContainer.getData()
+#rndAgent = RndAgent(0)
+curGameStates = initGameStates
 
-#features = computeFeatures(data['boardsData'], 
-#                           GameDataContainer.unflattenPlayersData(data['playersData']),
-#                           data['availableActionsData'], data['controlVariablesData'], equities,
-#                           np.random.randint(0, high=nGames, size=len(data['boardsData'])))
-#
-#regressor = ExtraTreesRegressor(n_estimators=10, min_samples_leaf=10, min_samples_split=4, 
-#                                verbose=2, n_jobs=-1)
-#regressor.fit(features, data['actions'])
+mockActions = np.zeros((len(curGameStates.availableActions),2), dtype=np.int64) - 999
+actionsToExecute = np.zeros((len(curGameStates.availableActions),2), dtype=np.int64) - 999
+
+
+# %%
+
+
+@jit(nopython=True, parallel=True, fastmath=True, nogil=True)
+#@jit(nopython=True, fastmath=True, nogil=True)
+#@njit(parallel=True)
+def computeFeaturesWrapperNb(boardsData, playersData, gameDataIndexes, idxIdx, winLen, mask):
+#    features = np.zeros((len(idxIdx)-1, 7, winLen+17), dtype=np.float32)
+    
+    maskIndexes = np.nonzero(mask)[0] + 1
+    features = np.zeros((len(maskIndexes), 7, winLen+17), dtype=np.float32)
+
+    stIdx, endIdx = np.zeros(np.sum(mask), dtype=np.uint64), np.zeros(np.sum(mask), np.uint64)
+    for k in range(len(stIdx)):
+        iMask = maskIndexes[k]
+        stIdx[k], endIdx[k] = idxIdx[iMask-1], idxIdx[iMask]
+        
+        
+    
+##    for i in prange(1,len(idxIdx)):
+##    for i in range(1,len(idxIdx)):
+#    for i in range(len(maskIndexes)):
+#        iMask = maskIndexes[i]
+##        print(iMask)
+##        prevIdx, curIdx = idxIdx[i-1], idxIdx[i]
+#        prevIdx, curIdx = idxIdx[iMask-1], idxIdx[iMask]
+##        print(prevIdx,curIdx)
+#        curGameDataIdx = gameDataIndexes[prevIdx:curIdx]
+
+#        eventFeats, boardSuits, boardRanks, holeSuits, holeRanks \
+#            = computeFeaturesNb(boardsData[curGameDataIdx], playersData[curGameDataIdx], 
+#                                winLen, ranksOnehotLut, suitsOnehotLut)
+#        
+#        features[i-1,:eventFeats.shape[0],:eventFeats.shape[1]] = eventFeats
+#        
+#        features[i-1,:2,eventFeats.shape[1]:eventFeats.shape[1]+4] = holeSuits
+#        features[i-1,2:,eventFeats.shape[1]:eventFeats.shape[1]+4] = boardSuits
+#        features[i-1,:2,eventFeats.shape[1]+4:] = holeRanks
+#        features[i-1,2:,eventFeats.shape[1]+4:] = boardRanks
+
+
+    for i in range(len(stIdx)):
+        print(i)
+        prevIdx, curIdx = stIdx[i], endIdx[i] 
+        curGameDataIdx = gameDataIndexes[prevIdx:curIdx]
+
+        eventFeats, boardSuits, boardRanks, holeSuits, holeRanks \
+            = computeFeaturesNb(boardsData[curGameDataIdx], playersData[curGameDataIdx], 
+                                winLen, ranksOnehotLut, suitsOnehotLut)
+        
+        features[i,:eventFeats.shape[0],:eventFeats.shape[1]] = eventFeats
+        
+        features[i,:2,eventFeats.shape[1]:eventFeats.shape[1]+4] = holeSuits
+        features[i,2:,eventFeats.shape[1]:eventFeats.shape[1]+4] = boardSuits
+        features[i,:2,eventFeats.shape[1]+4:] = holeRanks
+        features[i,2:,eventFeats.shape[1]+4:] = boardRanks
+
+    return features
+
+
+mask = maskAiAgent
+features = computeFeaturesWrapperNb(gameData['boardsData'], gameData['playersData'], gameDataIndexes,
+                                    idxIdx, WIN_LEN, mask)
+
+#print(features)
+
+#np.sum(mask)
+
+# %%
+
+    def getMasks(gameStates, playerNumber):
+        playerNum = playerNumber
+        
+        actingPlayerNum = np.argmax(gameStates.players[:,6].reshape((-1,2)),1)
+        actingPlayerMask = actingPlayerNum == playerNum
+        gameEndMask = gameStates.controlVariables[:,1] == 1
+        gameFailedMask = gameStates.controlVariables[:,1] == -999
+        allMask = actingPlayerMask & ~gameEndMask & ~gameFailedMask
+        
+        return allMask, actingPlayerMask, gameEndMask, gameFailedMask
+
+
+#while(1):
+        
+    gameDataContainer.addData(curGameStates, mockActions)
+
+    # Rnd agent actions
+    maskRndAgent, _, _, _, = getMasks(curGameStates, RND_AGENT_NUM)
+    actionsRndAgent = generateRndActions(curGameStates.availableActions[maskRndAgent], seed=SEED)
+    
+    # Ai agent actions
+    maskAiAgent, _, _, _, = getMasks(curGameStates, AI_AGENT_NUM)
+    gameDataIndexes, gameNums, idxIdx = gameDataContainer.getAllIndexes()
+    gameData, _ = gameDataContainer.getData()
+    features = computeFeaturesWrapperNb(gameData['boardsData'], gameData['playersData'], gameDataIndexes,
+                                        idxIdx, WIN_LEN)
+    
+    
+    actionsToExecute[:] = -999
+    actionsToExecute[maskRndAgent] = actionsRndAgent
+    actionsToExecute[maskAgent1] = actionsAgent1
+    
+
+    curGameStates = executeActions(curGameStates, actionsToExecute)
+    
+    nValidGames = np.sum(curGameStates.controlVariables[:,1]==0)
+    print(nValidGames)
+    
+    if(nValidGames == 0):
+        break
+    
+
+# Save also the last game state
+actionsToExecute = np.zeros((len(gameStates.availableActions),2), dtype=np.int64)-999
+gameDataContainer.addData(gameStates, actionsToExecute)
 
 
 # %%
 
 
 WIN_LEN = 20
+
 
 gameDataIndexes, gameNums, idxIdx = gameDataContainer.getAllIndexes()
 gameData, _ = gameDataContainer.getData()
