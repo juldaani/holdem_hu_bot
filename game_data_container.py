@@ -54,13 +54,20 @@ class GameDataContainer:
     
     
     def getAllIndexes(self):
-        _, indexes = self.getData()
+        _, gameIndexes = self.getData()
         
-        gameNumbers = [np.full(len(indexes[gameNum]), gameNum) for gameNum in range(len(indexes))]
-        gameNumbers = np.concatenate(gameNumbers)
-        indexes2 = np.concatenate(indexes)
+        gameNumbers = np.arange(len(gameIndexes))
+        idxIdx = np.cumsum([len(gameIndexes[i]) for i in range(len(gameIndexes))])
+        idxIdx = np.concatenate(([0],idxIdx))
+                
+        gameDataIndexes = np.zeros(idxIdx[-1], np.int)
+        c = 0
+        for curGameIndexes in gameIndexes:
+            for idx in curGameIndexes:
+                gameDataIndexes[c] = idx
+                c += 1
         
-        return indexes2, gameNumbers
+        return gameDataIndexes, gameNumbers, idxIdx
     
     
     def getIndexesForGameNums(self, gameNums):
