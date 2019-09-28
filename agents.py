@@ -10,9 +10,7 @@ import numpy as np
 from numba import jit
 from abc import ABC, abstractmethod
 
-from texas_hu_engine.wrappers import initRandomGames, executeActions, createActionsToExecute
-from holdem_hu_bot.features_rf import RfFeatures
-
+from texas_hu_engine.wrappers import createActionsToExecute
 
 class Agent(ABC):
     
