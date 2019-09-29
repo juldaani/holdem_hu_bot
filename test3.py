@@ -206,12 +206,41 @@ def computeFeaturesNb(boardsData, playersData, winLen, ranksOnehotLut, suitsOneh
 #        features[i-1,2:,eventFeats.shape[1]+4:] = boardRanks
 #
 #    return features
+        
+        
+@jit(nopython=True, parallel=True, fastmath=True, nogil=True)
+def computeFeaturesWrapperNb(boardsData, playersData, gameDataIndexes, idxIdx, winLen, mask):
+    maskIndexes = np.nonzero(mask)[0] + 1
+    features = np.zeros((len(maskIndexes), 7, winLen+17), dtype=np.float32)
+
+    stIdx, endIdx = np.zeros(len(maskIndexes), dtype=np.uint64), np.zeros(len(maskIndexes), np.uint64)
+    for k in range(len(stIdx)):
+        iMask = maskIndexes[k]
+        stIdx[k], endIdx[k] = idxIdx[iMask-1], idxIdx[iMask]
+        
+    for i in prange(len(stIdx)):
+        prevIdx, curIdx = stIdx[i], endIdx[i] 
+        curGameDataIdx = gameDataIndexes[prevIdx:curIdx]
+
+        eventFeats, boardSuits, boardRanks, holeSuits, holeRanks \
+            = computeFeaturesNb(boardsData[curGameDataIdx], playersData[curGameDataIdx], 
+                                winLen, ranksOnehotLut, suitsOnehotLut)
+        
+        features[i,:eventFeats.shape[0],:eventFeats.shape[1]] = eventFeats
+        
+        features[i,:2,eventFeats.shape[1]:eventFeats.shape[1]+4] = holeSuits
+        features[i,2:,eventFeats.shape[1]:eventFeats.shape[1]+4] = boardSuits
+        features[i,:2,eventFeats.shape[1]+4:] = holeRanks
+        features[i,2:,eventFeats.shape[1]+4:] = boardRanks
+    
+    return features
+
 
 
 # %%
 # Initialize agent
 
-N_GAMES = 10
+N_GAMES = 1000000
 RND_AGENT_NUM = 0
 AI_AGENT_NUM = np.abs(RND_AGENT_NUM-1)
 SEED = 123
@@ -235,73 +264,6 @@ actionsToExecute = np.zeros((len(curGameStates.availableActions),2), dtype=np.in
 # %%
 
 
-@jit(nopython=True, parallel=True, fastmath=True, nogil=True)
-#@jit(nopython=True, fastmath=True, nogil=True)
-#@njit(parallel=True)
-def computeFeaturesWrapperNb(boardsData, playersData, gameDataIndexes, idxIdx, winLen, mask):
-#    features = np.zeros((len(idxIdx)-1, 7, winLen+17), dtype=np.float32)
-    
-    maskIndexes = np.nonzero(mask)[0] + 1
-    features = np.zeros((len(maskIndexes), 7, winLen+17), dtype=np.float32)
-
-    stIdx, endIdx = np.zeros(np.sum(mask), dtype=np.uint64), np.zeros(np.sum(mask), np.uint64)
-    for k in range(len(stIdx)):
-        iMask = maskIndexes[k]
-        stIdx[k], endIdx[k] = idxIdx[iMask-1], idxIdx[iMask]
-        
-        
-    
-##    for i in prange(1,len(idxIdx)):
-##    for i in range(1,len(idxIdx)):
-#    for i in range(len(maskIndexes)):
-#        iMask = maskIndexes[i]
-##        print(iMask)
-##        prevIdx, curIdx = idxIdx[i-1], idxIdx[i]
-#        prevIdx, curIdx = idxIdx[iMask-1], idxIdx[iMask]
-##        print(prevIdx,curIdx)
-#        curGameDataIdx = gameDataIndexes[prevIdx:curIdx]
-
-#        eventFeats, boardSuits, boardRanks, holeSuits, holeRanks \
-#            = computeFeaturesNb(boardsData[curGameDataIdx], playersData[curGameDataIdx], 
-#                                winLen, ranksOnehotLut, suitsOnehotLut)
-#        
-#        features[i-1,:eventFeats.shape[0],:eventFeats.shape[1]] = eventFeats
-#        
-#        features[i-1,:2,eventFeats.shape[1]:eventFeats.shape[1]+4] = holeSuits
-#        features[i-1,2:,eventFeats.shape[1]:eventFeats.shape[1]+4] = boardSuits
-#        features[i-1,:2,eventFeats.shape[1]+4:] = holeRanks
-#        features[i-1,2:,eventFeats.shape[1]+4:] = boardRanks
-
-
-    for i in range(len(stIdx)):
-        print(i)
-        prevIdx, curIdx = stIdx[i], endIdx[i] 
-        curGameDataIdx = gameDataIndexes[prevIdx:curIdx]
-
-        eventFeats, boardSuits, boardRanks, holeSuits, holeRanks \
-            = computeFeaturesNb(boardsData[curGameDataIdx], playersData[curGameDataIdx], 
-                                winLen, ranksOnehotLut, suitsOnehotLut)
-        
-        features[i,:eventFeats.shape[0],:eventFeats.shape[1]] = eventFeats
-        
-        features[i,:2,eventFeats.shape[1]:eventFeats.shape[1]+4] = holeSuits
-        features[i,2:,eventFeats.shape[1]:eventFeats.shape[1]+4] = boardSuits
-        features[i,:2,eventFeats.shape[1]+4:] = holeRanks
-        features[i,2:,eventFeats.shape[1]+4:] = boardRanks
-
-    return features
-
-
-mask = maskAiAgent
-features = computeFeaturesWrapperNb(gameData['boardsData'], gameData['playersData'], gameDataIndexes,
-                                    idxIdx, WIN_LEN, mask)
-
-#print(features)
-
-#np.sum(mask)
-
-# %%
-
     def getMasks(gameStates, playerNumber):
         playerNum = playerNumber
         
@@ -315,7 +277,23 @@ features = computeFeaturesWrapperNb(gameData['boardsData'], gameData['playersDat
 
 
 #while(1):
-        
+    # %%
+    
+def scaler(features, winLen):
+    features[:,:,winLen:] -= 0.5    # cards
+    
+    features[:,:5,:winLen] -= 500    
+    features[:,:5,:winLen] /= 1000
+    features[:,-2,:winLen] -= 2
+    features[:,-2,:winLen] /= 4
+    
+    return features
+
+    
+    import time
+
+    t = time.time()
+    
     gameDataContainer.addData(curGameStates, mockActions)
 
     # Rnd agent actions
@@ -327,15 +305,22 @@ features = computeFeaturesWrapperNb(gameData['boardsData'], gameData['playersDat
     gameDataIndexes, gameNums, idxIdx = gameDataContainer.getAllIndexes()
     gameData, _ = gameDataContainer.getData()
     features = computeFeaturesWrapperNb(gameData['boardsData'], gameData['playersData'], gameDataIndexes,
-                                        idxIdx, WIN_LEN)
+                                        idxIdx, WIN_LEN, maskAiAgent)
+    
+    features = scaler(features, WIN_LEN)
     
     
     actionsToExecute[:] = -999
     actionsToExecute[maskRndAgent] = actionsRndAgent
-    actionsToExecute[maskAgent1] = actionsAgent1
+#    actionsToExecute[maskAiAgent] = generateRndActions(curGameStates.availableActions[maskAiAgent], 
+#                        seed=SEED)
     
 
     curGameStates = executeActions(curGameStates, actionsToExecute)
+
+    print(t-time.time())
+    
+    # %%
     
     nValidGames = np.sum(curGameStates.controlVariables[:,1]==0)
     print(nValidGames)
@@ -351,24 +336,6 @@ gameDataContainer.addData(gameStates, actionsToExecute)
 
 # %%
 
-
-WIN_LEN = 20
-
-
-gameDataIndexes, gameNums, idxIdx = gameDataContainer.getAllIndexes()
-gameData, _ = gameDataContainer.getData()
-boardsData, playersData = gameData['boardsData'], gameData['playersData']
-
-
-
-
-aa = computeFeaturesWrapperNb(boardsData, playersData, gameDataIndexes, idxIdx)
-
-
-    
-    
-
-# %%
 # Self-play
 
 nGames = 20000
