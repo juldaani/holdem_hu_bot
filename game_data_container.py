@@ -16,8 +16,8 @@ class GameDataContainer:
         self.__boardsData, self.__playersData, self.__controlVariablesData, \
             self.__availableActionsData, self.__actions = None, None, None, None, None
     
-    
-    def flattenPlayersData(self, playersData):
+    @staticmethod
+    def flattenPlayersData(playersData):
         flattenedData = np.zeros((int(len(playersData)/2), 
                                   playersData.shape[1]*2), dtype=playersData.dtype)
         flattenedData[:,:playersData.shape[1]] = playersData[::2]
