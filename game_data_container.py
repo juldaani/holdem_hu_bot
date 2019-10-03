@@ -7,6 +7,8 @@ Created on Sat Mar 23 11:36:11 2019
 """
 
 import numpy as np
+import time
+import itertools
 
 
 class GameDataContainer:
@@ -54,20 +56,23 @@ class GameDataContainer:
     
     
     def getAllIndexes(self):
-        _, gameIndexes = self.getData()
+        gameData, gameIndexes = self.getData()
         
         gameNumbers = np.arange(len(gameIndexes))
         idxIdx = np.cumsum([len(gameIndexes[i]) for i in range(len(gameIndexes))])
         idxIdx = np.concatenate(([0],idxIdx))
                 
-        gameDataIndexes = np.zeros(idxIdx[-1], np.int)
-        c = 0
-        for curGameIndexes in gameIndexes:
-            for idx in curGameIndexes:
-                gameDataIndexes[c] = idx
-                c += 1
+#        t = time.time()
+#        gameDataIndexes = np.zeros(idxIdx[-1], np.int)
+#        c = 0
+#        for curGameIndexes in gameIndexes:
+#            for idx in curGameIndexes:
+#                gameDataIndexes[c] = idx
+#                c += 1
+        gameDataIndexes = np.array(list(itertools.chain.from_iterable(gameIndexes)))
+#        print('loop ' + str(time.time()-t))
         
-        return gameDataIndexes, gameNumbers, idxIdx
+        return gameDataIndexes, gameNumbers, idxIdx, gameData
     
     
     def getIndexesForGameNums(self, gameNums):
