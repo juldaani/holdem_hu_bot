@@ -7,7 +7,6 @@ Created on Sat Mar 23 11:36:11 2019
 """
 
 import numpy as np
-import time
 import itertools
 
 
