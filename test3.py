@@ -285,13 +285,13 @@ def modelOutputsToActions(modelOutputs, pots, availableActions):
 
 SEED = 123
 
-POPULATION_SIZE = 100
+POPULATION_SIZE = 4
 
-N_HANDS_FOR_EVAL = 5000
+N_HANDS_FOR_EVAL = 5
 N_RND_PLAYS_PER_HAND = 2
 
-RND_AGENT_NUM = 0
-AI_AGENT_NUM = np.abs(RND_AGENT_NUM-1)
+RND_AGENT_IDX = 0
+AI_AGENT_IDX = np.abs(RND_AGENT_IDX-1)
 WIN_LEN = 20
 
 
@@ -343,20 +343,20 @@ t = time.time()
 
 while(1):
     
-    t3 = time.time()
+#    t3 = time.time()
     gameDataContainer.addData(curGameStates, mockActions)
-    print(time.time()-t3)
-    t2 = time.time()
+#    print(time.time()-t3)
+#    t2 = time.time()
     gameDataIndexes, gameNums, idxIdx, gameData = gameDataContainer.getAllIndexes()
-    print(time.time()-t2)
-
+#    print(time.time()-t2)
+    
     # Rnd agent actions
-    maskRndAgent, _, _, _, = getMasks(curGameStates, RND_AGENT_NUM)
+    maskRndAgent, _, _, _, = getMasks(curGameStates, RND_AGENT_IDX)
     actionsRndAgent = generateRndActions(curGameStates.availableActions[maskRndAgent], foldProb=0.0, 
                                          allInRaiseProb=0.1)
     
     # Ai agent actions
-    maskAiAgent, _, _, _, = getMasks(curGameStates, AI_AGENT_NUM)
+    maskAiAgent, _, _, _, = getMasks(curGameStates, AI_AGENT_IDX)
     features = computeFeaturesWrapperNb(gameData['boardsData'], gameData['playersData'], gameDataIndexes,
                                         idxIdx, WIN_LEN, maskAiAgent)
     potsAiAgent = features[:, 4, WIN_LEN-1]
@@ -378,7 +378,7 @@ while(1):
     # Model outputs are in following order: fold, call, min raise, raise pot*[0.5, 1.0, 1.5, 2.0, 2.5, 3.0], all-in
     modelOutputs = np.row_stack(modelOutputs)
 
-    # Convert model outputs into actions    
+    # Convert model outputs into actions
     smallBlinds = curGameStates.boards[maskAiAgent,1]
     potsAiAgent = (potsAiAgent * smallBlinds).astype(np.int)
     availableActions = curGameStates.availableActions[maskAiAgent]
@@ -402,6 +402,26 @@ while(1):
 gameDataContainer.addData(curGameStates, mockActions)
 
 print(t-time.time())
+
+
+# %%
+
+
+data, _ = gameDataContainer.getData()
+lastIndexes, _ = gameDataContainer.getLastIndexes()
+
+len(lastIndexes)
+
+data['playersData'].shape
+
+finalStacks = data['playersData'][lastIndexes][:,[2,10]]
+np.sum(finalStacks[:,0] < 0)
+
+winAmounts = getWinAmounts(gameDataContainer, initStacks)
+
+winAmounts = getWinAmounts(gameDataContainer, initStacks)[:,AI_AGENT_IDX]
+
+
 
 # %%
 
