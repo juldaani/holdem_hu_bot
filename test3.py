@@ -17,6 +17,7 @@ import tensorflow as tf
 tf.enable_eager_execution()
 from tensorflow import keras
 
+
 from holdem_hu_bot.agents import RndAgent, CallAgent, Agent, generateRndActions
 from holdem_hu_bot.game_data_container import GameDataContainer
 from holdem_hu_bot.common_stuff import suitsOnehotLut, ranksOnehotLut, encodeCardsOnehotNb
@@ -190,6 +191,10 @@ def getOptimizedWinAmounts(gameDataContainer, initStacks, RND_AGENT_IDX, AI_AGEN
     positiveWinAmountsMask = winAmountsAi > 0
     idxToOptimize = idxToOrig[positiveWinAmountsMask]
 #    winAmountsToOptimize = winAmountsAi[positiveWinAmountsMask]
+
+    # If win amounts for ai player are negative for all games
+    if(np.sum(positiveWinAmountsMask) == 0):
+        return winAmountsAi
     
     # Pick game states to be optimized
     gameData, indexes = gameDataContainer.getData()
@@ -206,6 +211,7 @@ def getOptimizedWinAmounts(gameDataContainer, initStacks, RND_AGENT_IDX, AI_AGEN
     
         rndAgentActingIdx = np.nonzero(actingPlayerIdx == RND_AGENT_IDX)[0]
         rndAgentActingIdx = rndAgentActingIdx[np.random.randint(len(rndAgentActingIdx))]
+#        rndAgentActingIdx = rndAgentActingIdx[0]
     
         players.append(GameDataContainer.unflattenPlayersData(playersData[rndAgentActingIdx].reshape((1,-1))))
         boards.append(boardsData[rndAgentActingIdx])
@@ -269,7 +275,7 @@ def playGames(gameDataContainer, gameStates, aiModel, RND_AGENT_IDX, AI_AGENT_ID
     
         # Termination criteria
         nValidGames = np.sum(gameStates.controlVariables[:,1]==0)
-        print(nValidGames)
+#        print(nValidGames)
         if(nValidGames == 0):
             break
         
@@ -284,14 +290,16 @@ def playGames(gameDataContainer, gameStates, aiModel, RND_AGENT_IDX, AI_AGENT_ID
 
 #SEED = 123
 
-POPULATION_SIZE = 4
+POPULATION_SIZE = 100
+RATIO_BEST_INDIVIDUALS = 0.15
+MUTATION_SIGMA = 1.0e-4
 
-N_HANDS_FOR_EVAL = 1000
-N_RND_PLAYS_PER_HAND = 2
+N_HANDS_FOR_EVAL = 2500
+N_RND_PLAYS_PER_HAND = 1
 
 RND_AGENT_IDX = 0
 AI_AGENT_IDX = np.abs(RND_AGENT_IDX-1)
-WIN_LEN = 20
+WIN_LEN = 2
 
 
 # Init ai-models
@@ -299,17 +307,29 @@ models = []
 for i in range(POPULATION_SIZE):
     m = keras.Sequential([
         keras.layers.Dense(50, activation='relu'),
-        keras.layers.Dense(50, activation='relu'),
+#        keras.layers.Dense(100, activation='relu'),
         # output: fold, call, min raise, raise pot*[0.5, 1.0, 1.5, 2.0, 2.5, 3.0], all-in
-#        keras.layers.Dense(10)])
 #        keras.layers.Dense(10, activation='softmax')])
-        keras.layers.Dense(10, activation='sigmoid')])
+#        keras.layers.Dense(10, activation='sigmoid')])
+        keras.layers.Dense(10, activation='relu')])
     models.append(m)
 
 
+
+## Disable gpu
+#import os
+#os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
+#
+#if tf.test.gpu_device_name():
+#    print('GPU found')
+#else:
+#    print("No GPU found")
+
+
+# %%
+    
 # Create game data for evaluation
 initGameStates, initStacks = initRandomGames(N_HANDS_FOR_EVAL)
-
 
 initGameStates.availableActions = np.repeat(initGameStates.availableActions, N_RND_PLAYS_PER_HAND, axis=0)
 initGameStates.boards = np.repeat(initGameStates.boards, N_RND_PLAYS_PER_HAND, axis=0)
@@ -319,49 +339,64 @@ initGameStates.players = GameDataContainer.unflattenPlayersData(np.repeat(
 initGameStates.validMask = np.repeat(initGameStates.validMask, N_RND_PLAYS_PER_HAND, axis=0)
 initGameStates.validMaskPlayers = np.repeat(initGameStates.validMaskPlayers, N_RND_PLAYS_PER_HAND, axis=0)
 initStacks = np.repeat(initStacks, N_RND_PLAYS_PER_HAND, axis=0)
-
-gameStates = [copy.deepcopy(initGameStates) for i in range(POPULATION_SIZE)]
-gameDataContainers = [GameDataContainer(N_HANDS_FOR_EVAL*N_RND_PLAYS_PER_HAND) for i in range(POPULATION_SIZE)]
-
 smallBlindsForGames = initGameStates.boards[:,1]
-
-#gameDataContainer = GameDataContainer(N_HANDS_FOR_EVAL*N_RND_PLAYS_PER_HAND*POPULATION_SIZE)
-#
-#curGameStates = initGameStates
 
 mockActions = np.zeros((len(initGameStates.availableActions),2), dtype=np.int64) - 999
 actionsToExecute = np.zeros((len(initGameStates.availableActions),2), dtype=np.int64) - 999
 
 
-# %%
+populationFitness, bestFitness = [], []
+for k in range(200):
+    
+    
+    # Play games
+    modelWinAmounts = []
+    for i in range(len(models)):
+#        print(i)
+        
+        gameStates = copy.deepcopy(initGameStates)
+        gameDataContainer = GameDataContainer(N_HANDS_FOR_EVAL*N_RND_PLAYS_PER_HAND)
+        
+        gameDataContainer = playGames(gameDataContainer, gameStates, models[i], RND_AGENT_IDX, AI_AGENT_IDX)
+#        optimizedWinAmounts = getOptimizedWinAmounts(gameDataContainers[i], initStacks, RND_AGENT_IDX, 
+#                                                     AI_AGENT_IDX, N_RND_PLAYS_PER_HAND)
+#        modelWinAmounts.append(optimizedWinAmounts)
+        winAmnts = getWinAmounts(gameDataContainer, initStacks)[:,AI_AGENT_IDX] / smallBlindsForGames
+        modelWinAmounts.append(winAmnts)
+    
+    modelFitness = [np.mean(amounts) for amounts in modelWinAmounts]
+#    modelFitness = [np.mean(amounts)/np.std(amounts) for amounts in modelWinAmounts]
+    
+    #plt.hist(modelWinAmountsAvg, bins=30)
+    print(k, np.mean(modelFitness), np.max(modelFitness))
+    populationFitness.append(np.mean(modelFitness))
+    bestFitness.append(np.max(modelFitness))
+    
+    sorter = np.argsort(modelFitness)
+    bestIdx = sorter[-int(len(sorter)*RATIO_BEST_INDIVIDUALS):]
+    
+    # Put the best individual without mutation to the next generation
+    nextGeneration = []
+    nextGeneration.append(models[bestIdx[-1]])
+#    nextGeneration = [models[idx] for idx in bestIdx]
+    
+    
+    # Mutate
+    for i in range(POPULATION_SIZE-len(nextGeneration)):
+        idx = bestIdx[np.random.randint(len(bestIdx))]
+            
+        model = copy.deepcopy(models[idx])
+        weights = model.get_weights()
+        weightsUpdated = [w + np.random.normal(scale=MUTATION_SIGMA, size=w.shape) for w in weights]
+        model.set_weights(weightsUpdated)
+        
+        nextGeneration.append(model)
+    
+    models = nextGeneration
+        
 
-
-import time
-t = time.time()
-
-i = 0
-
-gameDataContainers[i] = playGames(gameDataContainers[i], gameStates[i], models[i], RND_AGENT_IDX, AI_AGENT_IDX)
-
-optimizedWinAmounts = getOptimizedWinAmounts(gameDataContainers[i], initStacks, RND_AGENT_IDX, 
-                                             AI_AGENT_IDX, N_RND_PLAYS_PER_HAND)
-
-print(np.mean(optimizedWinAmounts))
-
-print(t-time.time())
-
-
-# %%
-
-i = 3
-
-curGameStates = gameStates[i]
-curGameDataContainer = gameDataContainers[i]
-
-
-print(np.sum(winAmounts[:,0]))
-print(np.sum(winAmounts[:,1]))
-
+plt.plot(populationFitness[0:])
+plt.plot(bestFitness[0:])
 
 
 # %%
