@@ -291,10 +291,10 @@ def playGames(gameDataContainer, gameStates, aiModel, RND_AGENT_IDX, AI_AGENT_ID
 #SEED = 123
 
 POPULATION_SIZE = 100
-RATIO_BEST_INDIVIDUALS = 0.15
+RATIO_BEST_INDIVIDUALS = 0.10
 MUTATION_SIGMA = 1.0e-4
 
-N_HANDS_FOR_EVAL = 2500
+N_HANDS_FOR_EVAL = 50000
 N_RND_PLAYS_PER_HAND = 1
 
 RND_AGENT_IDX = 0
@@ -327,7 +327,8 @@ for i in range(POPULATION_SIZE):
 
 
 # %%
-    
+
+
 # Create game data for evaluation
 initGameStates, initStacks = initRandomGames(N_HANDS_FOR_EVAL)
 
@@ -345,8 +346,24 @@ mockActions = np.zeros((len(initGameStates.availableActions),2), dtype=np.int64)
 actionsToExecute = np.zeros((len(initGameStates.availableActions),2), dtype=np.int64) - 999
 
 
-populationFitness, bestFitness = [], []
+
+bestIndexes = []
+#populationFitness, bestFitness = [], []
 for k in range(200):
+    
+    states, stacks = initRandomGames(int(N_HANDS_FOR_EVAL*0.10))
+    smallBlinds = states.boards[:,1]
+    rndIdx = np.random.choice(N_HANDS_FOR_EVAL, size=len(stacks), replace=0)
+    
+    smallBlindsForGames[rndIdx] = smallBlinds
+    initStacks[rndIdx] = stacks
+    
+    initGameStates.availableActions[rndIdx] = states.availableActions
+    initGameStates.boards[rndIdx] = states.boards
+    initGameStates.controlVariables[rndIdx] = states.controlVariables
+    rndIdx2 = np.repeat(rndIdx*2, 2)
+    rndIdx2[1::2] = rndIdx*2+1
+    initGameStates.players[rndIdx2] = states.players
     
     
     # Play games
@@ -369,17 +386,30 @@ for k in range(200):
     
     #plt.hist(modelWinAmountsAvg, bins=30)
     print(k, np.mean(modelFitness), np.max(modelFitness))
-    populationFitness.append(np.mean(modelFitness))
-    bestFitness.append(np.max(modelFitness))
+#    populationFitness.append(np.mean(modelFitness))
+#    bestFitness.append(np.max(modelFitness))
     
     sorter = np.argsort(modelFitness)
     bestIdx = sorter[-int(len(sorter)*RATIO_BEST_INDIVIDUALS):]
+
+    print(bestIdx[-10:])
+    bestIndexes.append(bestIdx)
+    print('...................................')
+    
+    
+    # %%
+    
+#    b = np.row_stack(bestIndexes)
+#    iii = 7
+#    np.sum(np.unique(b[[iii,iii+1]], return_counts=1)[1] > 1)
+    
     
     # Put the best individual without mutation to the next generation
+#    nextGeneration = [None for i in range(POPULATION_SIZE)]
+#    nextGeneration[bestIdx[-1]] = models[bestIdx[-1]]
     nextGeneration = []
     nextGeneration.append(models[bestIdx[-1]])
 #    nextGeneration = [models[idx] for idx in bestIdx]
-    
     
     # Mutate
     for i in range(POPULATION_SIZE-len(nextGeneration)):
