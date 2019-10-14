@@ -51,86 +51,65 @@ def scaler(features, winLen):
     return features
 
 
-@jit(nopython=True, cache=True, fastmath=True, nogil=True)
-def computeFeaturesNb(boardsData, playersData, winLen, ranksOnehotLut, suitsOnehotLut):
-    eventFeats = np.zeros((6,winLen))
-    
-    smallBlind = boardsData[-1,1] # Small blinds amounts are used for normalization
-    actingPlayerIdx = playersData[-1,14]
-    nonActingPlayerIdx = np.abs(actingPlayerIdx-1)
-    
-    # Pots, stacks etc. money stuffs
-    pots = boardsData[:,0]
-    bets = playersData[:,3] + playersData[:,11]
-    pots = pots + bets
-    stacks = np.asfortranarray(playersData[:,np.array([2,10])])
-    
-    # Normalized pots and stacks
-    potsNormalized = pots / smallBlind
-    stacksNormalized = stacks / smallBlind
-    
-    ownStacksNormalized = stacksNormalized[:, actingPlayerIdx]
-    opponentStacksNormalized = stacksNormalized[:, nonActingPlayerIdx]
-    
-    # Betting round
-    visibleCardsMask = boardsData[:,3:8].astype(np.bool_)
-    bettingRound = np.sum(visibleCardsMask[:,2:].astype(np.int64),1)
-    
-    # Put features into array
-    idx = min(len(potsNormalized), winLen)
-    eventFeats[0, -idx:] = ownStacksNormalized[-idx:]
-    eventFeats[1, -idx:-1] = np.abs(np.diff(ownStacksNormalized))[-(idx-1):]
-    eventFeats[2, -idx:] = opponentStacksNormalized[-idx:]
-    eventFeats[3, -idx:-1] = np.abs(np.diff(opponentStacksNormalized))[-(idx-1):]
-    eventFeats[4, -idx:] = potsNormalized[-idx:]
-    eventFeats[5, -idx:] = (bettingRound+1)[-idx:]    # Add 1 so we make difference to default value 0
-
-    # Encode cards one hot
-    boardCards = boardsData[-1,8:].reshape((1,-1))
-#    boardCards[boardCards == -999] = 0  # Assign zero if failure code because otherwise 
-        # 'encodeCardsOnehot' will fail
-    visibleCardsMask = boardsData[-1,3:8].astype(np.bool_).reshape((1,-1))
-    boardcardSuitsOnehot, boardcardRanksOnehot = encodeCardsOnehotNb(boardCards, visibleCardsMask, 
-                                                                     ranksOnehotLut, suitsOnehotLut)
-    holecards = playersData[-1:,np.array([0,1,8,9])]
-    holecards = holecards.reshape((2,2))[actingPlayerIdx]
-#    holecards[holecards == -999] = 0  # Assign zero if failure code because otherwise 
-        # 'encodeCardsOnehot' will fail
-    holecardSuitsOnehot, holecardRanksOnehot = encodeCardsOnehotNb(holecards.reshape(1,-1), 
-                                                                   np.ones(holecards.shape, dtype=np.bool_), 
-                                                                   ranksOnehotLut, suitsOnehotLut)
-
-    return eventFeats, boardcardSuitsOnehot[0], boardcardRanksOnehot[0], holecardSuitsOnehot[0], \
-        holecardRanksOnehot[0]
-        
-
-#@jit(nopython=True, parallel=True, fastmath=True, nogil=True)
 @jit(nopython=True, fastmath=True, nogil=True)
-def computeFeaturesWrapperNb(boardsData, playersData, gameDataIndexes, idxIdx, winLen, mask):
-    maskIndexes = np.nonzero(mask)[0] + 1
-    features = np.zeros((len(maskIndexes), 7, winLen+17), dtype=np.float32)
-
-    stIdx, endIdx = np.zeros(len(maskIndexes), dtype=np.uint64), np.zeros(len(maskIndexes), np.uint64)
-    for k in range(len(stIdx)):
-        iMask = maskIndexes[k]
-        stIdx[k], endIdx[k] = idxIdx[iMask-1], idxIdx[iMask]
+def computeFeaturesNb(boardsData, playersData, winLen, validMask, features):
+    for i in range(len(features)):
+        if(validMask[i] == False):
+            continue
         
-#    for i in prange(len(stIdx)):
-    for i in range(len(stIdx)):
-        prevIdx, curIdx = stIdx[i], endIdx[i] 
-        curGameDataIdx = gameDataIndexes[prevIdx:curIdx]
-
-        eventFeats, boardSuits, boardRanks, holeSuits, holeRanks \
-            = computeFeaturesNb(boardsData[curGameDataIdx], playersData[curGameDataIdx], 
-                                winLen, ranksOnehotLut, suitsOnehotLut)
+        curFeatures = features[i]
         
-        features[i,:eventFeats.shape[0],:eventFeats.shape[1]] = eventFeats
+        # Shift one
+        curFeaturesView = curFeatures.reshape(-1)
+        curFeaturesView[:-1] = curFeaturesView[1:]
         
-        features[i,:2,eventFeats.shape[1]:eventFeats.shape[1]+4] = holeSuits
-        features[i,2:,eventFeats.shape[1]:eventFeats.shape[1]+4] = boardSuits
-        features[i,:2,eventFeats.shape[1]+4:] = holeRanks
-        features[i,2:,eventFeats.shape[1]+4:] = boardRanks
-    
+        curBoard = boardsData[i]
+        curPlayers = playersData[i*2:i*2+2].reshape(-1)
+        
+        smallBlind = curBoard[1]   # Small blinds amounts are used for normalization
+        actingPlayerIdx = curPlayers[14]
+        nonActingPlayerIdx = np.abs(actingPlayerIdx-1)
+        
+        # Pots, stacks etc. money stuffs
+        pot = curBoard[0]
+        bets = curPlayers[3] + curPlayers[11]
+        pot += bets
+        stacks = curPlayers[np.array([2,10])]
+        
+        # Normalized pots and stacks
+        potNormalized = pot / smallBlind
+        stacksNormalized = stacks / smallBlind
+        ownStackNormalized = stacksNormalized[actingPlayerIdx]
+        opponentStackNormalized = stacksNormalized[nonActingPlayerIdx]
+        
+        # Betting round
+        bettingRound = np.sum(curBoard[3:8])
+        
+        curFeatures[0,winLen-1] = ownStackNormalized
+        curFeatures[1,winLen-1] = np.abs(curFeatures[0,winLen-2] - ownStackNormalized)
+        curFeatures[2,winLen-1] = opponentStackNormalized
+        curFeatures[3,winLen-1] = np.abs(curFeatures[2,winLen-2] - opponentStackNormalized)
+        curFeatures[4,winLen-1] = potNormalized
+        curFeatures[5,winLen-1] = bettingRound
+        
+        # Encode cards one hot
+        boardCards = curBoard[8:]
+        visibleCardsMask = curBoard[3:8].astype(np.bool_)
+        for k in range(len(boardCards)):
+            if(visibleCardsMask[k] == False):
+                continue
+            rankOneHot = ranksOnehotLut[boardCards[k]]
+            suitOneHot = suitsOnehotLut[boardCards[k]]
+            curFeatures[k,winLen:winLen+4] = suitOneHot
+            curFeatures[k,winLen+4:] = rankOneHot
+        
+        holecards = curPlayers[np.array([0,1,8,9])].reshape((2,2))[actingPlayerIdx]
+        for k in range(len(holecards)):
+            rankOneHot = ranksOnehotLut[holecards[k]]
+            suitOneHot = suitsOnehotLut[holecards[k]]
+            curFeatures[(-2+k),winLen:winLen+4] = suitOneHot
+            curFeatures[(-2+k),winLen+4:] = rankOneHot
+            
     return features
 
 
@@ -169,11 +148,9 @@ def modelOutputsToActions(modelOutputs, pots, availableActions):
     return actions
 
 
-def getWinAmounts(gameContainer, initStacks):
-    data, _ = gameContainer.getData()
-    lastIndexes, _ = gameContainer.getLastIndexes()
-    finalStacks = data['playersData'][lastIndexes][:,[2,10]]
-    
+def getWinAmounts(gameStates, initStacks):
+    finalStacks = np.column_stack((gameStates.players[::2,2],gameStates.players[1::2,2]))
+
     return finalStacks - initStacks
 
 
@@ -237,12 +214,16 @@ def getOptimizedWinAmounts(gameDataContainer, initStacks, RND_AGENT_IDX, AI_AGEN
     return optimizedWinAmounts
 
 
-def playGames(gameDataContainer, gameStates, aiModel, RND_AGENT_IDX, AI_AGENT_IDX):
+def playGamesWrapper(args):
+    return playGames(args['gameStates'], args['aiModel'], args['WIN_LEN'], args['RND_AGENT_IDX'], 
+                     args['AI_AGENT_IDX'])
+
+
+def playGames(gameStates, aiModel, WIN_LEN, RND_AGENT_IDX, AI_AGENT_IDX):
+    features = np.zeros((len(gameStates.boards), 7, WIN_LEN+17))
+    actionsToExecute = np.zeros((len(gameStates.boards),2), dtype=np.int64) - 999
     
-    while(1):    
-        gameDataContainer.addData(gameStates, mockActions)
-        gameDataIndexes, gameNums, idxIdx, gameData = gameDataContainer.getAllIndexes()
-        
+    while(1):
         # Rnd agent actions
         maskRndAgent, _, _, _, = getMasks(gameStates, RND_AGENT_IDX)
         actionsRndAgent = generateRndActions(gameStates.availableActions[maskRndAgent], foldProb=0.0, 
@@ -250,21 +231,21 @@ def playGames(gameDataContainer, gameStates, aiModel, RND_AGENT_IDX, AI_AGENT_ID
         
         # Ai agent actions
         maskAiAgent, _, _, _, = getMasks(gameStates, AI_AGENT_IDX)
-        features = computeFeaturesWrapperNb(gameData['boardsData'], gameData['playersData'], gameDataIndexes,
-                                            idxIdx, WIN_LEN, maskAiAgent)
-        potsAiAgent = features[:, 4, WIN_LEN-1].copy()
-        features = scaler(features, WIN_LEN)
-        features = features.reshape((len(features), features.shape[1]*features.shape[2]))
-    
-        assert np.sum(maskAiAgent) == len(features)     # Just test that the data matches
         
+        features = computeFeaturesNb(gameStates.boards, gameStates.players, WIN_LEN, maskAiAgent, features)
+        
+        featuresScaled = scaler(features[maskAiAgent], WIN_LEN)
+        featuresScaled = featuresScaled.reshape((len(featuresScaled), featuresScaled.shape[1]*featuresScaled.shape[2]))
+    
         # Calculate outputs
-        modelOutput = aiModel(tf.convert_to_tensor(features, dtype=tf.float32)).numpy()
+        modelOutput = aiModel(tf.convert_to_tensor(featuresScaled, dtype=tf.float32)).numpy()
     
         # Convert model outputs into actions
         smallBlinds = gameStates.boards[maskAiAgent,1]
+        potsAiAgent = features[:, 4, WIN_LEN-1][maskAiAgent]
         potsAiAgent = (potsAiAgent * smallBlinds).astype(np.int)
         availableActions = gameStates.availableActions[maskAiAgent]
+        
         actionsAiAgent = modelOutputsToActions(modelOutput, potsAiAgent, availableActions)
         
         # Put actions from ai and rnd agent together
@@ -277,15 +258,15 @@ def playGames(gameDataContainer, gameStates, aiModel, RND_AGENT_IDX, AI_AGENT_ID
     
         # Termination criteria
         nValidGames = np.sum(gameStates.controlVariables[:,1]==0)
+    
 #        print(nValidGames)
         if(nValidGames == 0):
             break
         
-    # Save also the last game state
-    gameDataContainer.addData(gameStates, mockActions)
-
-    return gameDataContainer
-
+    # Check that all games were succesful
+    assert np.all(~(gameStates.controlVariables[:,1] == -999))
+        
+    return gameStates
 
 # %%
 
@@ -301,12 +282,12 @@ if __name__ == "__main__":
     RATIO_BEST_INDIVIDUALS = 0.10
     MUTATION_SIGMA = 1.0e-4
     
-    N_HANDS_FOR_EVAL = 5
+    N_HANDS_FOR_EVAL = 1000
     N_RND_PLAYS_PER_HAND = 1
     
     RND_AGENT_IDX = 0
     AI_AGENT_IDX = np.abs(RND_AGENT_IDX-1)
-    WIN_LEN = 4
+    WIN_LEN = 40
     
     
     # Init ai-models
@@ -323,229 +304,20 @@ if __name__ == "__main__":
     
     
     
-    ## Disable gpu
-    #import os
-    #os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
-    #
-    #if tf.test.gpu_device_name():
-    #    print('GPU found')
-    #else:
-    #    print("No GPU found")
+    # Disable gpu
+    import os
+    os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
+    
+    if tf.test.gpu_device_name():
+        print('GPU found')
+    else:
+        print("No GPU found")
     
     
     
-# %%
-    
-
-# Create game data for evaluation
-initGameStates, initStacks = initRandomGames(N_HANDS_FOR_EVAL)
-
-initGameStates.availableActions = np.repeat(initGameStates.availableActions, N_RND_PLAYS_PER_HAND, axis=0)
-initGameStates.boards = np.repeat(initGameStates.boards, N_RND_PLAYS_PER_HAND, axis=0)
-initGameStates.controlVariables = np.repeat(initGameStates.controlVariables, N_RND_PLAYS_PER_HAND, axis=0)
-initGameStates.players = GameDataContainer.unflattenPlayersData(np.repeat(
-        GameDataContainer.flattenPlayersData(initGameStates.players), N_RND_PLAYS_PER_HAND, axis=0))
-initGameStates.validMask = np.repeat(initGameStates.validMask, N_RND_PLAYS_PER_HAND, axis=0)
-initGameStates.validMaskPlayers = np.repeat(initGameStates.validMaskPlayers, N_RND_PLAYS_PER_HAND, axis=0)
-initStacks = np.repeat(initStacks, N_RND_PLAYS_PER_HAND, axis=0)
-smallBlindsForGames = initGameStates.boards[:,1]
-
-mockActions = np.zeros((len(initGameStates.availableActions),2), dtype=np.int64) - 999
-actionsToExecute = np.zeros((len(initGameStates.availableActions),2), dtype=np.int64) - 999
-
-
-model = models[0]
-    
-
-features = np.zeros((N_HANDS_FOR_EVAL, WIN_LEN))
-
-gameStates = copy.deepcopy(initGameStates)
 
 # %%
-
-#while(1):
-#    gameDataContainer.addData(gameStates, mockActions)
-#    gameDataIndexes, gameNums, idxIdx, gameData = gameDataContainer.getAllIndexes()
-    
-    # Rnd agent actions
-    maskRndAgent, _, _, _, = getMasks(gameStates, RND_AGENT_IDX)
-    actionsRndAgent1 = generateRndActions(gameStates.availableActions[maskRndAgent], foldProb=0.0, 
-                                         allInRaiseProb=0.1)
-#    maskRndAgent2, _, _, _, = getMasks(gameStates, AI_AGENT_IDX)
-#    actionsRndAgent2 = generateRndActions(gameStates.availableActions[maskRndAgent2], foldProb=0.0, 
-#                                          allInRaiseProb=0.1)
-    
-    
-    # Ai agent actions
-    maskAiAgent, _, _, _, = getMasks(gameStates, AI_AGENT_IDX)
-    
-    
-    # %%
-
-#        features[i,:eventFeats.shape[0],:eventFeats.shape[1]] = eventFeats
-#        
-#        features[i,:2,eventFeats.shape[1]:eventFeats.shape[1]+4] = holeSuits
-#        features[i,2:,eventFeats.shape[1]:eventFeats.shape[1]+4] = boardSuits
-#        features[i,:2,eventFeats.shape[1]+4:] = holeRanks
-#        features[i,2:,eventFeats.shape[1]+4:] = boardRanks
-
-    features = np.zeros((N_HANDS_FOR_EVAL,7,WIN_LEN+17))
-    features = np.tile(np.arange(WIN_LEN+17, dtype=np.float), (N_HANDS_FOR_EVAL,7,1))
-
-    boardsData = gameStates.boards
-    playersData = gameStates.players
-    winLen = WIN_LEN
-    
-    for i in range(len(features)):
         
-        # %%
-        
-        i = 1
-        
-        curFeatures = features[i]
-        
-        # Shift one
-        curFeatures[:,:winLen-1] = curFeatures[:,1:winLen]
-        
-        curBoard = boardsData[i]
-        curPlayers = playersData[i*2:i*2+2].reshape(-1)
-        
-        smallBlind = curBoard[1]   # Small blinds amounts are used for normalization
-        actingPlayerIdx = curPlayers[14]
-        nonActingPlayerIdx = np.abs(actingPlayerIdx-1)
-        
-        # Pots, stacks etc. money stuffs
-        pot = curBoard[0]
-        bets = curPlayers[3] + curPlayers[11]
-        pot += bets
-        stacks = curPlayers[np.array([2,10])]
-        
-        # Normalized pots and stacks
-        potNormalized = pot / smallBlind
-        stacksNormalized = stacks / smallBlind
-        ownStackNormalized = stacksNormalized[actingPlayerIdx]
-        opponentStackNormalized = stacksNormalized[nonActingPlayerIdx]
-        
-        # Betting round
-        bettingRound = np.sum(curBoard[3:8])
-        
-        
-        curFeatures[0,winLen-1] = ownStackNormalized
-        
-        curFeatures[2,winLen-1] = opponentStackNormalized
-        
-        curFeatures[4,winLen-1] = potNormalized
-        curFeatures[5,winLen-1] = bettingRound
-        
-        
-        
-        
-        
-        # %%
-        
-@jit(nopython=True, cache=True, fastmath=True, nogil=True)
-def computeFeaturesNb(boardsData, playersData, winLen, ranksOnehotLut, suitsOnehotLut):
-    eventFeats = np.zeros((6,winLen))
-    
-    smallBlind = boardsData[-1,1] # Small blinds amounts are used for normalization
-    actingPlayerIdx = playersData[-1,14]
-    nonActingPlayerIdx = np.abs(actingPlayerIdx-1)
-    
-    # Pots, stacks etc. money stuffs
-    pots = boardsData[:,0]
-    bets = playersData[:,3] + playersData[:,11]
-    pots = pots + bets
-    stacks = np.asfortranarray(playersData[:,np.array([2,10])])
-    
-    # Normalized pots and stacks
-    potsNormalized = pots / smallBlind
-    stacksNormalized = stacks / smallBlind
-    ownStacksNormalized = stacksNormalized[:, actingPlayerIdx]
-    opponentStacksNormalized = stacksNormalized[:, nonActingPlayerIdx]
-    
-    # Betting round
-    visibleCardsMask = boardsData[:,3:8].astype(np.bool_)
-    bettingRound = np.sum(visibleCardsMask[:,2:].astype(np.int64),1)
-    
-    # Put features into array
-    idx = min(len(potsNormalized), winLen)
-    eventFeats[0, -idx:] = ownStacksNormalized[-idx:]
-    eventFeats[1, -idx:-1] = np.abs(np.diff(ownStacksNormalized))[-(idx-1):]
-    eventFeats[2, -idx:] = opponentStacksNormalized[-idx:]
-    eventFeats[3, -idx:-1] = np.abs(np.diff(opponentStacksNormalized))[-(idx-1):]
-    eventFeats[4, -idx:] = potsNormalized[-idx:]
-    eventFeats[5, -idx:] = (bettingRound+1)[-idx:]    # Add 1 so we make difference to default value 0
-
-    # Encode cards one hot
-    boardCards = boardsData[-1,8:].reshape((1,-1))
-#    boardCards[boardCards == -999] = 0  # Assign zero if failure code because otherwise 
-        # 'encodeCardsOnehot' will fail
-    visibleCardsMask = boardsData[-1,3:8].astype(np.bool_).reshape((1,-1))
-    boardcardSuitsOnehot, boardcardRanksOnehot = encodeCardsOnehotNb(boardCards, visibleCardsMask, 
-                                                                     ranksOnehotLut, suitsOnehotLut)
-    holecards = playersData[-1:,np.array([0,1,8,9])]
-    holecards = holecards.reshape((2,2))[actingPlayerIdx]
-#    holecards[holecards == -999] = 0  # Assign zero if failure code because otherwise 
-        # 'encodeCardsOnehot' will fail
-    holecardSuitsOnehot, holecardRanksOnehot = encodeCardsOnehotNb(holecards.reshape(1,-1), 
-                                                                   np.ones(holecards.shape, dtype=np.bool_), 
-                                                                   ranksOnehotLut, suitsOnehotLut)
-
-    return eventFeats, boardcardSuitsOnehot[0], boardcardRanksOnehot[0], holecardSuitsOnehot[0], \
-        holecardRanksOnehot[0]
-
-    
-    
-    # %%
-
-    
-#    features = computeFeaturesWrapperNb(gameData['boardsData'], gameData['playersData'], gameDataIndexes,
-#                                        idxIdx, WIN_LEN, maskAiAgent)
-#    potsAiAgent = features[:, 4, WIN_LEN-1].copy()
-#    features = scaler(features, WIN_LEN)
-#    features = features.reshape((len(features), features.shape[1]*features.shape[2]))
-#
-#    assert np.sum(maskAiAgent) == len(features)     # Just test that the data matches
-#    
-#    # Calculate outputs
-#    modelOutput = aiModel(tf.convert_to_tensor(features, dtype=tf.float32)).numpy()
-#
-#    # Convert model outputs into actions
-#    smallBlinds = gameStates.boards[maskAiAgent,1]
-#    potsAiAgent = (potsAiAgent * smallBlinds).astype(np.int)
-#    availableActions = gameStates.availableActions[maskAiAgent]
-#    actionsAiAgent = modelOutputsToActions(modelOutput, potsAiAgent, availableActions)
-#    
-#    # Put actions from ai and rnd agent together
-#    actionsToExecute[:] = -999
-#    actionsToExecute[maskRndAgent] = actionsRndAgent
-#    actionsToExecute[maskAiAgent] = actionsAiAgent
-    
-    # Put actions from ai and rnd agent together
-    actionsToExecute[:] = -999
-    actionsToExecute[maskRndAgent1] = actionsRndAgent1
-    actionsToExecute[maskRndAgent2] = actionsRndAgent2
-    
-    # Feed actions into game engine
-    gameStates = executeActions(gameStates, actionsToExecute)
-
-    # Termination criteria
-    nValidGames = np.sum(gameStates.controlVariables[:,1]==0)
-#        print(nValidGames)
-    if(nValidGames == 0):
-        break
-    
-# Save also the last game state
-gameDataContainer.addData(gameStates, mockActions)
-
-    
-    
-    
-    
-    
-    # %%
-    
-    
     # Create game data for evaluation
     initGameStates, initStacks = initRandomGames(N_HANDS_FOR_EVAL)
     
@@ -559,16 +331,11 @@ gameDataContainer.addData(gameStates, mockActions)
     initStacks = np.repeat(initStacks, N_RND_PLAYS_PER_HAND, axis=0)
     smallBlindsForGames = initGameStates.boards[:,1]
     
-    mockActions = np.zeros((len(initGameStates.availableActions),2), dtype=np.int64) - 999
-    actionsToExecute = np.zeros((len(initGameStates.availableActions),2), dtype=np.int64) - 999
     
-    
-    
-    bestIndexes = []
     populationFitness, bestFitness = [], []
-    for k in range(200000):
+    for k in range(30):
         
-        states, stacks = initRandomGames(int(N_HANDS_FOR_EVAL*0.10))
+        states, stacks = initRandomGames(int(N_HANDS_FOR_EVAL*0.30))
         smallBlinds = states.boards[:,1]
         rndIdx = np.random.choice(N_HANDS_FOR_EVAL, size=len(stacks), replace=0)
         
@@ -582,36 +349,38 @@ gameDataContainer.addData(gameStates, mockActions)
         rndIdx2[1::2] = rndIdx*2+1
         initGameStates.players[rndIdx2] = states.players
         
+        assert 0
         
         # Play games
         modelWinAmounts = []
         for i in range(len(models)):
-    #        print(i)
             
-            gameStates = copy.deepcopy(initGameStates)
-            gameDataContainer = GameDataContainer(N_HANDS_FOR_EVAL*N_RND_PLAYS_PER_HAND)
             
-            gameDataContainer = playGames(gameDataContainer, gameStates, models[i], RND_AGENT_IDX, AI_AGENT_IDX)
+            gameStates = playGames(copy.deepcopy(initGameStates), models[i], WIN_LEN, RND_AGENT_IDX, AI_AGENT_IDX)
+
+            # Check that games are zero-sum
+            assert np.sum(getWinAmounts(gameStates, initStacks)) == 0
+            
     #        optimizedWinAmounts = getOptimizedWinAmounts(gameDataContainers[i], initStacks, RND_AGENT_IDX, 
     #                                                     AI_AGENT_IDX, N_RND_PLAYS_PER_HAND)
     #        modelWinAmounts.append(optimizedWinAmounts)
-            winAmnts = getWinAmounts(gameDataContainer, initStacks)[:,AI_AGENT_IDX] / smallBlindsForGames
+    
+            winAmnts = getWinAmounts(gameStates, initStacks)[:,AI_AGENT_IDX] / smallBlindsForGames
             modelWinAmounts.append(winAmnts)
         
         modelFitness = [np.mean(amounts) for amounts in modelWinAmounts]
     #    modelFitness = [np.mean(amounts)/np.std(amounts) for amounts in modelWinAmounts]
         
-        #plt.hist(modelWinAmountsAvg, bins=30)
         print(k, np.mean(modelFitness), np.max(modelFitness))
-    #    populationFitness.append(np.mean(modelFitness))
-    #    bestFitness.append(np.max(modelFitness))
+        populationFitness.append(np.mean(modelFitness))
+        bestFitness.append(np.max(modelFitness))
         
         sorter = np.argsort(modelFitness)
         bestIdx = sorter[-int(len(sorter)*RATIO_BEST_INDIVIDUALS):]
     
         # Save data
-        [tf.keras.models.save_model(model, 'data/models/'+str(i)) for i,model in enumerate(models)]
-        np.save('data/'+str(k)+'_win_amounts', modelWinAmounts)
+#        [tf.keras.models.save_model(model, 'data/models/'+str(i)) for i,model in enumerate(models)]
+#        np.save('data/'+str(k)+'_win_amounts', modelWinAmounts)
     #    m = tf.keras.models.load_model('aa.aa')    # This is how to load, just a note
     
         
@@ -636,8 +405,8 @@ gameDataContainer.addData(gameStates, mockActions)
         models = nextGeneration
             
     
-    #plt.plot(populationFitness[0:])
-    #plt.plot(bestFitness[0:])
+    plt.plot(populationFitness[0:])
+    plt.plot(bestFitness[0:])
     
     
     # %%
