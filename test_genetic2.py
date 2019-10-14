@@ -14,15 +14,18 @@ import copy
 import matplotlib.pyplot as plt
 import sys
 
+#from joblib import Parallel, delayed
+import multiprocessing as mp
+
 import tensorflow as tf
-tf.enable_eager_execution()
+#tf.enable_eager_execution()
 from tensorflow import keras
 
 
 sys.path.append('/home/juho/dev_folder/')
-from holdem_hu_bot.agents import RndAgent, CallAgent, Agent, generateRndActions
+from holdem_hu_bot.agents import generateRndActions
 from holdem_hu_bot.game_data_container import GameDataContainer
-from holdem_hu_bot.common_stuff import suitsOnehotLut, ranksOnehotLut, encodeCardsOnehotNb
+from holdem_hu_bot.common_stuff import suitsOnehotLut, ranksOnehotLut
 from texas_hu_engine.wrappers import initRandomGames, executeActions, createActionsToExecute, GameState
 
 
@@ -51,7 +54,7 @@ def scaler(features, winLen):
     return features
 
 
-@jit(nopython=True, fastmath=True, nogil=True)
+@jit(nopython=True, fastmath=True)
 def computeFeaturesNb(boardsData, playersData, winLen, validMask, features):
     for i in range(len(features)):
         if(validMask[i] == False):
@@ -113,7 +116,7 @@ def computeFeaturesNb(boardsData, playersData, winLen, validMask, features):
     return features
 
 
-@jit(nopython=True, fastmath=True, nogil=True)
+@jit(nopython=True, fastmath=True)
 def modelOutputsToActions(modelOutputs, pots, availableActions):
     actions = np.zeros((len(modelOutputs),2), dtype=np.int64)-1
     
@@ -214,12 +217,13 @@ def getOptimizedWinAmounts(gameDataContainer, initStacks, RND_AGENT_IDX, AI_AGEN
     return optimizedWinAmounts
 
 
-def playGamesWrapper(args):
-    return playGames(args['gameStates'], args['aiModel'], args['WIN_LEN'], args['RND_AGENT_IDX'], 
-                     args['AI_AGENT_IDX'])
+#def playGamesWrapper(args):
+#    return playGames(args['gameStates'], args['aiModel'], args['WIN_LEN'], args['RND_AGENT_IDX'], 
+#                     args['AI_AGENT_IDX'])
 
 
-def playGames(gameStates, aiModel, WIN_LEN, RND_AGENT_IDX, AI_AGENT_IDX):
+#def playGames(gameStates, aiModel, WIN_LEN, RND_AGENT_IDX, AI_AGENT_IDX):
+def playGames(gameStates, WIN_LEN, RND_AGENT_IDX, AI_AGENT_IDX):
     features = np.zeros((len(gameStates.boards), 7, WIN_LEN+17))
     actionsToExecute = np.zeros((len(gameStates.boards),2), dtype=np.int64) - 999
     
@@ -229,29 +233,37 @@ def playGames(gameStates, aiModel, WIN_LEN, RND_AGENT_IDX, AI_AGENT_IDX):
         actionsRndAgent = generateRndActions(gameStates.availableActions[maskRndAgent], foldProb=0.0, 
                                              allInRaiseProb=0.1)
         
-        # Ai agent actions
-        maskAiAgent, _, _, _, = getMasks(gameStates, AI_AGENT_IDX)
-        
-        features = computeFeaturesNb(gameStates.boards, gameStates.players, WIN_LEN, maskAiAgent, features)
-        
-        featuresScaled = scaler(features[maskAiAgent], WIN_LEN)
-        featuresScaled = featuresScaled.reshape((len(featuresScaled), featuresScaled.shape[1]*featuresScaled.shape[2]))
-    
-        # Calculate outputs
-        modelOutput = aiModel(tf.convert_to_tensor(featuresScaled, dtype=tf.float32)).numpy()
-    
-        # Convert model outputs into actions
-        smallBlinds = gameStates.boards[maskAiAgent,1]
-        potsAiAgent = features[:, 4, WIN_LEN-1][maskAiAgent]
-        potsAiAgent = (potsAiAgent * smallBlinds).astype(np.int)
-        availableActions = gameStates.availableActions[maskAiAgent]
-        
-        actionsAiAgent = modelOutputsToActions(modelOutput, potsAiAgent, availableActions)
-        
+        maskRndAgent2, _, _, _, = getMasks(gameStates, AI_AGENT_IDX)
+        actionsRndAgent2 = generateRndActions(gameStates.availableActions[maskRndAgent2], foldProb=0.0, 
+                                             allInRaiseProb=0.1)
+#        
+#        # Ai agent actions
+#        maskAiAgent, _, _, _, = getMasks(gameStates, AI_AGENT_IDX)
+#        
+#        features = computeFeaturesNb(gameStates.boards, gameStates.players, WIN_LEN, maskAiAgent, features)
+#        featuresScaled = scaler(features[maskAiAgent], WIN_LEN)
+#        featuresScaled = featuresScaled.reshape((len(featuresScaled), 
+#                                                 featuresScaled.shape[1]*featuresScaled.shape[2]))
+#    
+#        # Calculate outputs
+##        modelOutput = aiModel(tf.convert_to_tensor(featuresScaled, dtype=tf.float32)).numpy()
+#        modelOutput = aiModel.predict(featuresScaled)
+#        if(len(modelOutput) == 0):
+#            modelOutput = np.zeros((0,10), dtype=np.float)
+#    
+#        # Convert model outputs into actions
+#        smallBlinds = gameStates.boards[maskAiAgent,1]
+#        potsAiAgent = features[:, 4, WIN_LEN-1][maskAiAgent]
+#        potsAiAgent = (potsAiAgent * smallBlinds).astype(np.int)
+#        availableActions = gameStates.availableActions[maskAiAgent]
+#        
+#        actionsAiAgent = modelOutputsToActions(modelOutput, potsAiAgent, availableActions)
+#        
         # Put actions from ai and rnd agent together
         actionsToExecute[:] = -999
         actionsToExecute[maskRndAgent] = actionsRndAgent
-        actionsToExecute[maskAiAgent] = actionsAiAgent
+        actionsToExecute[maskRndAgent2] = actionsRndAgent2
+#        actionsToExecute[maskAiAgent] = actionsAiAgent
         
         # Feed actions into game engine
         gameStates = executeActions(gameStates, actionsToExecute)
@@ -267,6 +279,18 @@ def playGames(gameStates, aiModel, WIN_LEN, RND_AGENT_IDX, AI_AGENT_IDX):
     assert np.all(~(gameStates.controlVariables[:,1] == -999))
         
     return gameStates
+
+
+
+def playGamesWrapper(gameStates, WIN_LEN, RND_AGENT_IDX, AI_AGENT_IDX):
+    m = keras.Sequential()
+    m.add(keras.layers.Dense(50, activation='relu', input_dim=7*(WIN_LEN+17)))
+    m.add(keras.layers.Dense(10, activation='relu'))
+    
+#        a = playGames(gameStates, m, WIN_LEN, RND_AGENT_IDX, AI_AGENT_IDX)
+    
+    return 234134*2
+
 
 # %%
 
@@ -293,15 +317,17 @@ if __name__ == "__main__":
     # Init ai-models
     models = []
     for i in range(POPULATION_SIZE):
-        m = keras.Sequential([
-            keras.layers.Dense(50, activation='relu'),
-    #        keras.layers.Dense(100, activation='relu'),
-            # output: fold, call, min raise, raise pot*[0.5, 1.0, 1.5, 2.0, 2.5, 3.0], all-in
-    #        keras.layers.Dense(10, activation='softmax')])
-    #        keras.layers.Dense(10, activation='sigmoid')])
-            keras.layers.Dense(10, activation='relu')])
+        m = keras.Sequential()
+        m.add(keras.layers.Dense(50, activation='relu', input_dim=7*(WIN_LEN+17)))
+        m.add(keras.layers.Dense(10, activation='relu'))
+#        m = keras.Sequential([
+#            keras.layers.Dense(50, activation='relu'),
+#    #        keras.layers.Dense(100, activation='relu'),
+#            # output: fold, call, min raise, raise pot*[0.5, 1.0, 1.5, 2.0, 2.5, 3.0], all-in
+#    #        keras.layers.Dense(10, activation='softmax')])
+#    #        keras.layers.Dense(10, activation='sigmoid')])
+#            keras.layers.Dense(10, activation='relu')])
         models.append(m)
-    
     
     
     # Disable gpu
@@ -313,8 +339,11 @@ if __name__ == "__main__":
     else:
         print("No GPU found")
     
-    
-    
+
+
+#arr = np.random.randint(0, high=4, size=(5,399))
+#k = models[0](tf.convert_to_tensor(arr, dtype=tf.float32))
+#k = models[0].predict(arr)
 
 # %%
         
@@ -333,7 +362,7 @@ if __name__ == "__main__":
     
     
     populationFitness, bestFitness = [], []
-    for k in range(30):
+    for k in range(1):
         
         states, stacks = initRandomGames(int(N_HANDS_FOR_EVAL*0.30))
         smallBlinds = states.boards[:,1]
@@ -349,14 +378,45 @@ if __name__ == "__main__":
         rndIdx2[1::2] = rndIdx*2+1
         initGameStates.players[rndIdx2] = states.players
         
+
+# %%
+        
+        def playGamesWrapper(gameStates, WIN_LEN, RND_AGENT_IDX, AI_AGENT_IDX):
+            m = keras.Sequential()
+            m.add(keras.layers.Dense(50, activation='relu', input_dim=7*(WIN_LEN+17)))
+            m.add(keras.layers.Dense(10, activation='relu'))
+            
+#            a = playGames(gameStates, WIN_LEN, RND_AGENT_IDX, AI_AGENT_IDX)
+                        
+            arr = np.random.randint(0, high=4, size=(5,399))
+            k = m.predict(arr)
+                        
+            return k
+                
+        
+        pool = mp.Pool(processes=2)
+        
+        results = [pool.apply_async(playGamesWrapper, args=(copy.deepcopy(initGameStates), WIN_LEN, 
+                                                      RND_AGENT_IDX, AI_AGENT_IDX,)) for x in range(10)]
+        
+#        results = [pool.apply_async(playGames, args=(copy.deepcopy(initGameStates), WIN_LEN, models[0],
+#                                                     RND_AGENT_IDX, AI_AGENT_IDX,)) for x in range(4)]
+#        playGames(gameStates, aiModel, WIN_LEN, RND_AGENT_IDX, AI_AGENT_IDX)
+        
+        output = [p.get() for p in results]
+        print(output)
+
+
+    # %%
+        
         assert 0
+        
         
         # Play games
         modelWinAmounts = []
         for i in range(len(models)):
-            
-            
-            gameStates = playGames(copy.deepcopy(initGameStates), models[i], WIN_LEN, RND_AGENT_IDX, AI_AGENT_IDX)
+            gameStates = playGames(copy.deepcopy(initGameStates), models[i], WIN_LEN, RND_AGENT_IDX, 
+                                   AI_AGENT_IDX)
 
             # Check that games are zero-sum
             assert np.sum(getWinAmounts(gameStates, initStacks)) == 0
