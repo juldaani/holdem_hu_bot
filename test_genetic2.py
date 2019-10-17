@@ -317,24 +317,42 @@ if __name__ == "__main__":
     
     RND_AGENT_IDX = 0
     AI_AGENT_IDX = np.abs(RND_AGENT_IDX-1)
-    WIN_LEN = 40
+    WIN_LEN = 2
     
     N_CORES = 6
     
     device = torch.device('cpu')
     
     class AiModel(nn.Module):
-        def __init__(self):
+        def __init__(self, winLen):
             super(AiModel, self).__init__()
             
             self.layers = nn.Sequential(
-                nn.Linear(7*(WIN_LEN+17), 50),
+                nn.Linear(7*(winLen+17), 50),
                 nn.ReLU(),
                 nn.Linear(50, 10))
+            
+            # Get references to weights and biases. These are used when mutating the model.
+            self.weights, self.biases = [], []
+            for layer in self.layers:
+                # Hack. Throws an AttributeError if there is no weights associated for the layer, e.q., nn.Relu
+                try:
+                    self.weights.append(layer.weight)
+                    self.biases.append(layer.bias)
+                except AttributeError:
+                    pass
             
         def forward(self, x):
             x = self.layers(x)
             return x
+        
+        def mutate(self, sigma):
+            for i in range(len(self.weights)):
+                w = self.weights[i].data.numpy()
+                b = self.biases[i].data.numpy()
+                w += np.random.normal(scale=sigma, size=w.shape)
+                b += np.random.normal(scale=sigma, size=b.shape)
+    
 
     models = []
     for i in range(POPULATION_SIZE):
@@ -342,7 +360,7 @@ if __name__ == "__main__":
 #        m.add(keras.layers.Dense(50, activation='relu', input_dim=7*(WIN_LEN+17)))
 #        m.add(keras.layers.Dense(10, activation='relu'))
         
-        models.append(AiModel().to(device))
+        models.append(AiModel(WIN_LEN).to(device))
     
 
 #    # Disable gpu
@@ -352,8 +370,8 @@ if __name__ == "__main__":
 #        print('GPU found')
 #    else:
 #        print("No GPU found")
-
-
+        
+    
 
 # %%
         
@@ -372,7 +390,10 @@ if __name__ == "__main__":
     
     
     populationFitness, bestFitness = [], []
-    for k in range(1):
+    
+    # %%
+    
+    for k in range(500):
         
 #        states, stacks = initRandomGames(int(N_HANDS_FOR_EVAL*0.30))
 #        smallBlinds = states.boards[:,1]
@@ -424,8 +445,6 @@ if __name__ == "__main__":
         sorter = np.argsort(modelFitness)
         bestIdx = sorter[-int(len(sorter)*RATIO_BEST_INDIVIDUALS):]
     
-        print('OK')
-        assert 0
     
         # Save data
 #        [tf.keras.models.save_model(model, 'data/models/'+str(i)) for i,model in enumerate(models)]
@@ -433,19 +452,16 @@ if __name__ == "__main__":
     #    m = tf.keras.models.load_model('aa.aa')    # This is how to load, just a note
     
         # Put the best individual without mutation to the next generation
-#        nextGeneration = [None for i in range(POPULATION_SIZE)]
-#        nextGeneration[bestIdx[-1]] = models[bestIdx[-1]]
         nextGeneration = []
-        nextGeneration.append(models[bestIdx[-1]])
-    #    nextGeneration = [models[idx] for idx in bestIdx]
+#        nextGeneration.append(models[bestIdx[-1]])
+        nextGeneration = [models[idx] for idx in bestIdx]
         
         # Mutate
         for i in range(POPULATION_SIZE-len(nextGeneration)):
             idx = bestIdx[np.random.randint(len(bestIdx))]
             
             model = copy.deepcopy(models[idx])
-            
-            
+            model.mutate(MUTATION_SIGMA)
             
 #            weights = model.get_weights()
 #            weightsUpdated = [w + np.random.normal(scale=MUTATION_SIGMA, size=w.shape) for w in weights]
