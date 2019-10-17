@@ -255,7 +255,6 @@ def playGames(gameStates, aiModel, WIN_LEN, RND_AGENT_IDX, AI_AGENT_IDX):
         potsAiAgent = features[:, 4, WIN_LEN-1][maskAiAgent]
         potsAiAgent = (potsAiAgent * smallBlinds).astype(np.int)
         availableActions = gameStates.availableActions[maskAiAgent]
-        
         actionsAiAgent = modelOutputsToActions(modelOutput, potsAiAgent, availableActions)
         
         # Put actions from ai and rnd agent together
@@ -298,9 +297,8 @@ def playGamesParallel(initGameStates, models, nCores, winLen, rndAgentIdx, aiAge
     return finalGameStates[sorter]
 
 
-# %%
 
-if __name__ == "__main__":
+#if __name__ == "__main__":
     
     # %%
     
@@ -310,9 +308,9 @@ if __name__ == "__main__":
     
     POPULATION_SIZE = 100
     RATIO_BEST_INDIVIDUALS = 0.10
-    MUTATION_SIGMA = 1.0e-4
+    MUTATION_SIGMA = 1.0e-1
     
-    N_HANDS_FOR_EVAL = 1000
+    N_HANDS_FOR_EVAL = 25000
     N_RND_PLAYS_PER_HAND = 1
     
     RND_AGENT_IDX = 0
@@ -328,9 +326,9 @@ if __name__ == "__main__":
             super(AiModel, self).__init__()
             
             self.layers = nn.Sequential(
-                nn.Linear(7*(winLen+17), 50),
+                nn.Linear(7*(winLen+17), 250),
                 nn.ReLU(),
-                nn.Linear(50, 10))
+                nn.Linear(250, 10))
             
             # Get references to weights and biases. These are used when mutating the model.
             self.weights, self.biases = [], []
@@ -393,21 +391,24 @@ if __name__ == "__main__":
     
     # %%
     
-    for k in range(500):
+    for k in range(25):
         
-#        states, stacks = initRandomGames(int(N_HANDS_FOR_EVAL*0.30))
-#        smallBlinds = states.boards[:,1]
-#        rndIdx = np.random.choice(N_HANDS_FOR_EVAL, size=len(stacks), replace=0)
-#        
-#        smallBlindsForGames[rndIdx] = smallBlinds
-#        initStacks[rndIdx] = stacks
-#        
-#        initGameStates.availableActions[rndIdx] = states.availableActions
-#        initGameStates.boards[rndIdx] = states.boards
-#        initGameStates.controlVariables[rndIdx] = states.controlVariables
-#        rndIdx2 = np.repeat(rndIdx*2, 2)
-#        rndIdx2[1::2] = rndIdx*2+1
-#        initGameStates.players[rndIdx2] = states.players
+        
+        states, stacks = initRandomGames(int(N_HANDS_FOR_EVAL*0.10))
+        smallBlinds = states.boards[:,1]
+        rndIdx = np.random.choice(N_HANDS_FOR_EVAL, size=len(stacks), replace=0)
+        
+        smallBlindsForGames[rndIdx] = smallBlinds
+        initStacks[rndIdx] = stacks
+        
+        initGameStates.availableActions[rndIdx] = states.availableActions
+        initGameStates.boards[rndIdx] = states.boards
+        initGameStates.controlVariables[rndIdx] = states.controlVariables
+        rndIdx2 = np.repeat(rndIdx*2, 2)
+        rndIdx2[1::2] = rndIdx*2+1
+        initGameStates.players[rndIdx2] = states.players
+        
+        
         
         # Play games
         finalGameStates = playGamesParallel(initGameStates, models, N_CORES, WIN_LEN, RND_AGENT_IDX, AI_AGENT_IDX)
@@ -445,6 +446,9 @@ if __name__ == "__main__":
         sorter = np.argsort(modelFitness)
         bestIdx = sorter[-int(len(sorter)*RATIO_BEST_INDIVIDUALS):]
     
+        
+        
+        
     
         # Save data
 #        [tf.keras.models.save_model(model, 'data/models/'+str(i)) for i,model in enumerate(models)]
@@ -453,8 +457,7 @@ if __name__ == "__main__":
     
         # Put the best individual without mutation to the next generation
         nextGeneration = []
-#        nextGeneration.append(models[bestIdx[-1]])
-        nextGeneration = [models[idx] for idx in bestIdx]
+        nextGeneration = [models[idx] for idx in bestIdx[-5:]]
         
         # Mutate
         for i in range(POPULATION_SIZE-len(nextGeneration)):
