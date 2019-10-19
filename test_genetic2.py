@@ -20,7 +20,7 @@ import multiprocessing as mp
 import torch
 torch.set_num_threads(1)
 import torch.nn as nn
-import torch.nn.functional as F
+#import torch.nn.functional as F
 
 
 #import tensorflow as tf
@@ -163,6 +163,27 @@ def getWinAmounts(gameStates, initStacks):
     return finalStacks - initStacks
 
 
+def getWinAmountsForModels(gameStates, initStacks, agentIdx):
+    modelWinAmounts = []
+    for states in gameStates:
+        smallBlinds = states.boards[:,1]
+        winAmounts = getWinAmounts(states, initStacks)
+        assert np.sum(winAmounts) == 0  # Check that games are zero-sum
+        winAmounts = winAmounts[:,agentIdx] / smallBlinds
+        modelWinAmounts.append(winAmounts)
+        
+    return modelWinAmounts
+
+
+def optimizeWinAmounts(modelWinAmounts):
+    for i in range(len(modelWinAmounts)):
+        winAmounts = modelWinAmounts[i]
+        m = winAmounts > 0
+        winAmounts[m] = 3 + np.random.rand(np.sum(m)) * (winAmounts[m]-3)
+        
+    return modelWinAmounts
+    
+
 def getOptimizedWinAmounts(gameDataContainer, initStacks, RND_AGENT_IDX, AI_AGENT_IDX, N_RND_PLAYS_PER_HAND):
     winAmountsAi = getWinAmounts(gameDataContainer, initStacks)[:,AI_AGENT_IDX]
     
@@ -297,6 +318,56 @@ def playGamesParallel(initGameStates, models, nCores, winLen, rndAgentIdx, aiAge
     return finalGameStates[sorter]
 
 
+class AiModel(nn.Module):
+    def __init__(self, winLen):
+        super(AiModel, self).__init__()
+        
+        self.layers = nn.Sequential(
+            nn.Linear(7*(winLen+17), 250),
+            nn.ReLU(),
+            nn.Linear(250, 10))
+        
+        # Get references to weights and biases. These are used when mutating the model.
+        self.weights, self.biases = [], []
+        for layer in self.layers:
+            # Hack. Throws an AttributeError if there is no weights associated for the layer, e.q., nn.Relu
+            try:
+                self.weights.append(layer.weight)
+                self.biases.append(layer.bias)
+            except AttributeError:
+                pass
+        
+    def forward(self, x):
+        x = self.layers(x)
+        return x
+
+#        def mutate(self, sigma):
+#            for i in range(len(self.weights)):
+#                w = self.weights[i].data.numpy()
+#                b = self.biases[i].data.numpy()
+#                w += np.random.normal(scale=sigma, size=w.shape)
+#                b += np.random.normal(scale=sigma, size=b.shape)
+
+    def mutateWeights(self, sigma, ratio=1.0):
+        for i in range(len(self.weights)):
+            w = self.weights[i].data.numpy().reshape(-1)
+            rndIdx = np.random.choice(len(w), size=max(1,int(ratio*len(w))), replace=0)
+            w[rndIdx] += np.random.normal(scale=sigma, size=len(rndIdx))
+#                w = self.weights[i].data.numpy()
+#                w += np.random.normal(scale=sigma, size=w.shape)
+
+    def mutateBiases(self, sigma, ratio=1.0):
+        for i in range(len(self.biases)):
+            b = self.biases[i].data.numpy().reshape(-1)
+            rndIdx = np.random.choice(len(b), size=max(1,int(ratio*len(b))), replace=0)
+            b[rndIdx] += np.random.normal(scale=sigma, size=len(rndIdx))
+#                b = self.biases[i].data.numpy()
+#                b += np.random.normal(scale=sigma, size=b.shape)
+            
+    def mutate(self, sigma, ratio=1.0):
+        self.mutateWeights(sigma, ratio=ratio)
+        self.mutateBiases(sigma, ratio=ratio)
+
 
 #if __name__ == "__main__":
     
@@ -306,11 +377,13 @@ def playGamesParallel(initGameStates, models, nCores, winLen, rndAgentIdx, aiAge
     
     #SEED = 123
     
-    POPULATION_SIZE = 100
+    POPULATION_SIZE = 200
     RATIO_BEST_INDIVIDUALS = 0.10
     MUTATION_SIGMA = 1.0e-1
+    MUTATION_RATIO = 0.05
     
-    N_HANDS_FOR_EVAL = 25000
+    N_HANDS_FOR_EVAL = 50000
+    N_HANDS_FOR_RE_EVAL = 200000
     N_RND_PLAYS_PER_HAND = 1
     
     RND_AGENT_IDX = 0
@@ -321,35 +394,6 @@ def playGamesParallel(initGameStates, models, nCores, winLen, rndAgentIdx, aiAge
     
     device = torch.device('cpu')
     
-    class AiModel(nn.Module):
-        def __init__(self, winLen):
-            super(AiModel, self).__init__()
-            
-            self.layers = nn.Sequential(
-                nn.Linear(7*(winLen+17), 250),
-                nn.ReLU(),
-                nn.Linear(250, 10))
-            
-            # Get references to weights and biases. These are used when mutating the model.
-            self.weights, self.biases = [], []
-            for layer in self.layers:
-                # Hack. Throws an AttributeError if there is no weights associated for the layer, e.q., nn.Relu
-                try:
-                    self.weights.append(layer.weight)
-                    self.biases.append(layer.bias)
-                except AttributeError:
-                    pass
-            
-        def forward(self, x):
-            x = self.layers(x)
-            return x
-        
-        def mutate(self, sigma):
-            for i in range(len(self.weights)):
-                w = self.weights[i].data.numpy()
-                b = self.biases[i].data.numpy()
-                w += np.random.normal(scale=sigma, size=w.shape)
-                b += np.random.normal(scale=sigma, size=b.shape)
     
 
     models = []
@@ -359,7 +403,7 @@ def playGamesParallel(initGameStates, models, nCores, winLen, rndAgentIdx, aiAge
 #        m.add(keras.layers.Dense(10, activation='relu'))
         
         models.append(AiModel(WIN_LEN).to(device))
-    
+    models = np.array(models)
 
 #    # Disable gpu
 #    import os
@@ -369,9 +413,10 @@ def playGamesParallel(initGameStates, models, nCores, winLen, rndAgentIdx, aiAge
 #    else:
 #        print("No GPU found")
         
-    
+
 
 # %%
+    
         
     # Create game data for evaluation
     initGameStates, initStacks = initRandomGames(N_HANDS_FOR_EVAL)
@@ -384,21 +429,21 @@ def playGamesParallel(initGameStates, models, nCores, winLen, rndAgentIdx, aiAge
     initGameStates.validMask = np.repeat(initGameStates.validMask, N_RND_PLAYS_PER_HAND, axis=0)
     initGameStates.validMaskPlayers = np.repeat(initGameStates.validMaskPlayers, N_RND_PLAYS_PER_HAND, axis=0)
     initStacks = np.repeat(initStacks, N_RND_PLAYS_PER_HAND, axis=0)
-    smallBlindsForGames = initGameStates.boards[:,1]
-    
+#    smallBlindsForGames = initGameStates.boards[:,1]
     
     populationFitness, bestFitness = [], []
     
+    
     # %%
     
-    for k in range(25):
+    for k in range(20000):
         
         
-        states, stacks = initRandomGames(int(N_HANDS_FOR_EVAL*0.10))
-        smallBlinds = states.boards[:,1]
+        states, stacks = initRandomGames(int(N_HANDS_FOR_EVAL*0.90))
+#        smallBlinds = states.boards[:,1]
         rndIdx = np.random.choice(N_HANDS_FOR_EVAL, size=len(stacks), replace=0)
         
-        smallBlindsForGames[rndIdx] = smallBlinds
+#        smallBlindsForGames[rndIdx] = smallBlinds
         initStacks[rndIdx] = stacks
         
         initGameStates.availableActions[rndIdx] = states.availableActions
@@ -409,46 +454,43 @@ def playGamesParallel(initGameStates, models, nCores, winLen, rndAgentIdx, aiAge
         initGameStates.players[rndIdx2] = states.players
         
         
-        
         # Play games
-        finalGameStates = playGamesParallel(initGameStates, models, N_CORES, WIN_LEN, RND_AGENT_IDX, AI_AGENT_IDX)
+        finalGameStates = playGamesParallel(initGameStates, models, N_CORES, WIN_LEN, RND_AGENT_IDX, 
+                                            AI_AGENT_IDX)
         assert len(finalGameStates) == POPULATION_SIZE
         
-        modelWinAmounts = []
-        for states in finalGameStates:
-            winAmounts = getWinAmounts(states, initStacks)
-            assert np.sum(winAmounts) == 0  # Check that games are zero-sum
-            winAmounts = winAmounts[:,AI_AGENT_IDX] / smallBlindsForGames
-            modelWinAmounts.append(winAmounts)
+        modelWinAmounts = getWinAmountsForModels(finalGameStates, initStacks, AI_AGENT_IDX)
+        modelWinAmounts = optimizeWinAmounts(modelWinAmounts)
         
-#        modelWinAmounts = []
-#        for i in range(len(models)):
-#            gameStates = playGames(copy.deepcopy(initGameStates), models[i], WIN_LEN, RND_AGENT_IDX, 
-#                                   AI_AGENT_IDX)
-#
-#            # Check that games are zero-sum
-#            assert np.sum(getWinAmounts(gameStates, initStacks)) == 0
-#            
-#    #        optimizedWinAmounts = getOptimizedWinAmounts(gameDataContainers[i], initStacks, RND_AGENT_IDX, 
-#    #                                                     AI_AGENT_IDX, N_RND_PLAYS_PER_HAND)
-#    #        modelWinAmounts.append(optimizedWinAmounts)
-#    
-#            winAmnts = getWinAmounts(gameStates, initStacks)[:,AI_AGENT_IDX] / smallBlindsForGames
-#            modelWinAmounts.append(winAmnts)
-
-        modelFitness = [np.mean(amounts) for amounts in modelWinAmounts]
-    #    modelFitness = [np.mean(amounts)/np.std(amounts) for amounts in modelWinAmounts]
-        
-        print(k, np.mean(modelFitness), np.max(modelFitness))
-        populationFitness.append(np.mean(modelFitness))
-        bestFitness.append(np.max(modelFitness))
+#        modelFitness = [np.mean(amounts) for amounts in modelWinAmounts]
+        modelFitness = [np.mean(amounts)/np.std(amounts) for amounts in modelWinAmounts]
         
         sorter = np.argsort(modelFitness)
         bestIdx = sorter[-int(len(sorter)*RATIO_BEST_INDIVIDUALS):]
     
+    
+    
+        replayGameStates, replayStacks = initRandomGames(N_HANDS_FOR_RE_EVAL)
+        replayFinalGameStates = playGamesParallel(replayGameStates, models[bestIdx], N_CORES, WIN_LEN, 
+                                                  RND_AGENT_IDX, AI_AGENT_IDX)
+        assert len(finalGameStates) == POPULATION_SIZE
+        replayModelWinAmounts = getWinAmountsForModels(replayFinalGameStates, replayStacks, AI_AGENT_IDX)
+        replayModelWinAmounts = optimizeWinAmounts(replayModelWinAmounts)
+#        replayModelFitness = [np.mean(np.concatenate((amounts,amounts2))) \
+        replayModelFitness = [np.mean(np.concatenate((amounts,amounts2)))/np.std(np.concatenate((amounts,amounts2))) \
+            for amounts,amounts2 in zip(replayModelWinAmounts,modelWinAmounts)]
+#        print(np.argsort(replayModelFitness))
+        bestIdx = bestIdx[np.argsort(replayModelFitness)]
+
         
+        populationFitness.append(np.mean(modelFitness))
+        bestFitness.append(np.max(replayModelFitness))
         
+        print('................................')
+        print(k, np.mean(modelFitness), np.max(replayModelFitness))
+        print(np.argsort(replayModelFitness))
         
+
     
         # Save data
 #        [tf.keras.models.save_model(model, 'data/models/'+str(i)) for i,model in enumerate(models)]
@@ -457,14 +499,14 @@ def playGamesParallel(initGameStates, models, nCores, winLen, rndAgentIdx, aiAge
     
         # Put the best individual without mutation to the next generation
         nextGeneration = []
-        nextGeneration = [models[idx] for idx in bestIdx[-5:]]
+        nextGeneration = [models[idx] for idx in bestIdx[-3:]]
         
         # Mutate
         for i in range(POPULATION_SIZE-len(nextGeneration)):
             idx = bestIdx[np.random.randint(len(bestIdx))]
             
             model = copy.deepcopy(models[idx])
-            model.mutate(MUTATION_SIGMA)
+            model.mutate(MUTATION_SIGMA, ratio=MUTATION_RATIO)
             
 #            weights = model.get_weights()
 #            weightsUpdated = [w + np.random.normal(scale=MUTATION_SIGMA, size=w.shape) for w in weights]
@@ -472,11 +514,12 @@ def playGamesParallel(initGameStates, models, nCores, winLen, rndAgentIdx, aiAge
             
             nextGeneration.append(model)
         
-        models = nextGeneration
+        models = np.array(nextGeneration)
             
     
-    plt.plot(populationFitness[0:])
-    plt.plot(bestFitness[0:])
+    n = 5
+    plt.plot(populationFitness[n:])
+    plt.plot(bestFitness[n:])
     
     
     # %%
