@@ -251,8 +251,10 @@ def playGames(gameStates, aiModel, WIN_LEN, RND_AGENT_IDX, AI_AGENT_IDX):
     while(1):
         # Rnd agent actions
         maskRndAgent, _, _, _, = getMasks(gameStates, RND_AGENT_IDX)
-        actionsRndAgent = generateRndActions(gameStates.availableActions[maskRndAgent], foldProb=0.0, 
-                                             allInRaiseProb=0.1)
+#        actionsRndAgent = generateRndActions(gameStates.availableActions[maskRndAgent], foldProb=0.0, 
+#                                             allInRaiseProb=0.1)
+        actionsRndAgent = np.zeros((np.sum(maskRndAgent),2))-1
+        actionsRndAgent[:,1] = gameStates.availableActions[maskRndAgent,0]   # Only call
         
         # Ai agent actions
         maskAiAgent, _, _, _, = getMasks(gameStates, AI_AGENT_IDX)
@@ -379,11 +381,11 @@ class AiModel(nn.Module):
     
     POPULATION_SIZE = 200
     RATIO_BEST_INDIVIDUALS = 0.10
-    MUTATION_SIGMA = 1.0e-1
-    MUTATION_RATIO = 0.05
+    MUTATION_SIGMA = 1.0e-2
+    MUTATION_RATIO = 1.0
     
-    N_HANDS_FOR_EVAL = 50000
-    N_HANDS_FOR_RE_EVAL = 200000
+    N_HANDS_FOR_EVAL = 25000
+    N_HANDS_FOR_RE_EVAL = 100000
     N_RND_PLAYS_PER_HAND = 1
     
     RND_AGENT_IDX = 0
@@ -436,10 +438,10 @@ class AiModel(nn.Module):
     
     # %%
     
-    for k in range(20000):
+    for k in range(50):
         
         
-        states, stacks = initRandomGames(int(N_HANDS_FOR_EVAL*0.90))
+        states, stacks = initRandomGames(int(N_HANDS_FOR_EVAL*0.25))
 #        smallBlinds = states.boards[:,1]
         rndIdx = np.random.choice(N_HANDS_FOR_EVAL, size=len(stacks), replace=0)
         
@@ -454,16 +456,19 @@ class AiModel(nn.Module):
         initGameStates.players[rndIdx2] = states.players
         
         
+        
         # Play games
         finalGameStates = playGamesParallel(initGameStates, models, N_CORES, WIN_LEN, RND_AGENT_IDX, 
                                             AI_AGENT_IDX)
         assert len(finalGameStates) == POPULATION_SIZE
         
         modelWinAmounts = getWinAmountsForModels(finalGameStates, initStacks, AI_AGENT_IDX)
-        modelWinAmounts = optimizeWinAmounts(modelWinAmounts)
+#        modelWinAmounts = optimizeWinAmounts(modelWinAmounts)
         
-#        modelFitness = [np.mean(amounts) for amounts in modelWinAmounts]
-        modelFitness = [np.mean(amounts)/np.std(amounts) for amounts in modelWinAmounts]
+        modelFitness = [np.mean(amounts) for amounts in modelWinAmounts]
+#        modelFitness = [np.mean(amounts)/np.std(amounts) for amounts in modelWinAmounts]
+#        modelFitness = [(np.mean(amounts)) + (np.sum(~(np.isclose(amounts,-1) | \
+#                            np.isclose(amounts,-2)))/len(amounts)) for amounts in modelWinAmounts]
         
         sorter = np.argsort(modelFitness)
         bestIdx = sorter[-int(len(sorter)*RATIO_BEST_INDIVIDUALS):]
@@ -475,22 +480,31 @@ class AiModel(nn.Module):
                                                   RND_AGENT_IDX, AI_AGENT_IDX)
         assert len(finalGameStates) == POPULATION_SIZE
         replayModelWinAmounts = getWinAmountsForModels(replayFinalGameStates, replayStacks, AI_AGENT_IDX)
-        replayModelWinAmounts = optimizeWinAmounts(replayModelWinAmounts)
-#        replayModelFitness = [np.mean(np.concatenate((amounts,amounts2))) \
-        replayModelFitness = [np.mean(np.concatenate((amounts,amounts2)))/np.std(np.concatenate((amounts,amounts2))) \
+#        replayModelWinAmounts = optimizeWinAmounts(replayModelWinAmounts)
+#        replayModelFitness = [(np.mean(np.concatenate((amounts,amounts2)))) + \
+#                              (np.sum(~(np.isclose(np.concatenate((amounts,amounts2)),-1) | \
+#                                        np.isclose(np.concatenate((amounts,amounts2)),-2)))/ \
+#                                            len(np.concatenate((amounts,amounts2))))
+        replayModelFitness = [np.mean(np.concatenate((amounts,amounts2))) \
+#        replayModelFitness = [np.mean(np.concatenate((amounts,amounts2)))/ \
+#                np.std(np.concatenate((amounts,amounts2))) \
             for amounts,amounts2 in zip(replayModelWinAmounts,modelWinAmounts)]
 #        print(np.argsort(replayModelFitness))
         bestIdx = bestIdx[np.argsort(replayModelFitness)]
 
+        [np.mean(np.concatenate((amounts,amounts2))) \
+             for amounts,amounts2 in zip(replayModelWinAmounts,modelWinAmounts)]
         
         populationFitness.append(np.mean(modelFitness))
         bestFitness.append(np.max(replayModelFitness))
         
         print('................................')
         print(k, np.mean(modelFitness), np.max(replayModelFitness))
-        print(np.argsort(replayModelFitness))
+#        print(k, np.mean([np.mean(amounts) for amounts in modelWinAmounts]), 
+#              np.max([np.mean(np.concatenate((amounts,amounts2))) \
+#                      for amounts,amounts2 in zip(replayModelWinAmounts,modelWinAmounts)]))
+#        print(np.argsort(replayModelFitness))
         
-
     
         # Save data
 #        [tf.keras.models.save_model(model, 'data/models/'+str(i)) for i,model in enumerate(models)]
