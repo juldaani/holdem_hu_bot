@@ -173,8 +173,8 @@ def optimizeWinAmounts(modelWinAmounts):
         winAmounts[m] = 3 + np.random.rand(np.sum(m)) * (winAmounts[m]-3)
         
     return modelWinAmounts
+ 
     
-
 def playGames(gameStates, models, WIN_LEN):
     features = np.zeros((len(gameStates.boards), 7, WIN_LEN+17))
     actionsToExecute = np.zeros((len(gameStates.boards),2), dtype=np.int64) - 999
@@ -217,25 +217,25 @@ def playGames(gameStates, models, WIN_LEN):
     
         # Termination criteria
         nValidGames = np.sum(gameStates.controlVariables[:,1]==0)
-        print(nValidGames)
+#        print(nValidGames)
         if(nValidGames == 0):
             break
         
     # Check that all games were succesful
     assert np.all(~(gameStates.controlVariables[:,1] == -999))
-        
+    
     return gameStates
 
+    
+def playGamesWrapper(gameStates, models, WIN_LEN, idx):
+    return (playGames(gameStates, models, WIN_LEN), idx)
 
-def playGamesWrapper(gameStates, aiModel, WIN_LEN, RND_AGENT_IDX, AI_AGENT_IDX, idx):
-    return (playGames(gameStates, aiModel, WIN_LEN, RND_AGENT_IDX, AI_AGENT_IDX), idx)
 
-
-def playGamesParallel(initGameStates, models, nCores, winLen, rndAgentIdx, aiAgentIdx):
+def playGamesParallel(initGameStates, modelsPopulation, modelOpponent, nCores, winLen):
     pool = mp.Pool(nCores)
-    result_objects = [pool.apply_async(playGamesWrapper, args=(copy.deepcopy(initGameStates), models[i],
-                                                  winLen, rndAgentIdx, aiAgentIdx, i)) 
-                                                            for i in range(len(models))]
+    result_objects = [pool.apply_async(playGamesWrapper, args=(copy.deepcopy(initGameStates), 
+                                                               (modelsPopulation[i], modelOpponent), winLen, i)) 
+                                                            for i in range(len(modelsPopulation))]
     results = [r.get() for r in result_objects]
 
     # Sort results because it is not quaranteed that apply_async returns them in correct order
@@ -286,6 +286,18 @@ class AiModel(nn.Module):
         self.mutateBiases(sigma, ratio=ratio)
 
 
+class Population():
+    def __init__(self, size, winLen):
+        device = torch.device('cpu')
+        
+        models = []
+        for i in range(size):
+            models.append(AiModel(winLen).to(device))
+        
+        self.models = np.array(models)
+        self.bestModel = models[np.random.randint(len(models))]
+
+
 #if __name__ == "__main__":
     
     # %%
@@ -293,142 +305,199 @@ class AiModel(nn.Module):
     # Initialize agent
     
     #SEED = 123
+    N_CORES = 12
     
-    POPULATION_SIZE = 200
+    N_POPULATIONS = 3
+    POPULATION_SIZE = 100
     RATIO_BEST_INDIVIDUALS = 0.10
     MUTATION_SIGMA = 1.0e-2
     MUTATION_RATIO = 1.0
     
     N_HANDS_FOR_EVAL = 10000
-#    N_HANDS_FOR_RE_EVAL = 100000
+#    N_HANDS_FOR_RE_EVAL = 30000
     N_RND_PLAYS_PER_HAND = 1
     
     WIN_LEN = 2
     
-    N_CORES = 6
     
     device = torch.device('cpu')
     
+    populations = np.array([Population(POPULATION_SIZE, WIN_LEN) for _ in range(N_POPULATIONS)])
     
 
-    models = []
-    for i in range(POPULATION_SIZE):
-        models.append(AiModel(WIN_LEN).to(device))
-    models = np.array(models)
+#    models = []
+#    for i in range(POPULATION_SIZE):
+#        models.append(AiModel(WIN_LEN).to(device))
+#    models = np.array(models)
 
         
-
-
 # %%
+
+from texas_hu_engine.engine_numba import initGame
+
+def initRandomGames(nGames, seed=-1):
+    boards, players, controlVariables, availableActions, initStacks = initGamesWrapper(nGames, seed=seed)
     
+    return GameState(boards, players, controlVariables, availableActions), initStacks
+
+
+#@jit(nopython=True, fastmath=True)
+def initGamesWrapper(nGames, seed=-1):
+    if(seed != -1):
+        np.random.seed(seed)
+    
+    boardsArr = np.zeros((nGames*2, 13), dtype=np.int32)
+    playersArr = np.zeros((nGames*2*2, 8), dtype=np.int32)
+    controlVariablesArr = np.zeros((nGames*2, 3), dtype=np.int16)
+    availableActionsArr = np.zeros((nGames*2, 3), dtype=np.int64)
+    initStacksArr = np.zeros((nGames*2, 2), dtype=np.int64)
+    
+    for i in range(nGames):
+        tmpCards = np.random.choice(52, size=9, replace=0)
+        boardCards = tmpCards[:5]
+        holeCards = np.zeros((2,2), dtype=np.int64)
+        holeCards[0,:] = tmpCards[5:7]
+        holeCards[1,:] = tmpCards[7:]
+        smallBlindPlayerIdx = np.random.randint(0,high=2)
+        smallBlindAmount = np.random.randint(1,high=100)
+        initStacks = np.array([np.random.randint(smallBlindAmount*2, high=smallBlindAmount*400 + \
+                                                 np.random.randint(smallBlindAmount)), 
+                               np.random.randint(smallBlindAmount*2, high=smallBlindAmount*400 + \
+                                                 np.random.randint(smallBlindAmount))])
         
-    # Create game data for evaluation
-    initGameStates, initStacks = initRandomGames(N_HANDS_FOR_EVAL)
+        board, players, controlVariables, availableActions = initGame(boardCards, smallBlindPlayerIdx, 
+                                                                      smallBlindAmount, initStacks.copy(), 
+                                                                      holeCards)
+        boardsArr[i,:] = board
+        playersArr[i*2:i*2+2,:] = players
+        controlVariablesArr[i,:] = controlVariables
+        availableActionsArr[i,:] = availableActions
+        initStacksArr[i,:] = initStacks
+        
+        # Flip players
+        initStacks = initStacks[[1,0]]
+        holeCards = holeCards[[1,0]]
+        board, players, controlVariables, availableActions = initGame(boardCards, np.abs(smallBlindPlayerIdx-1), 
+                                                                      smallBlindAmount, initStacks.copy(), 
+                                                                      holeCards)
+        boardsArr[(nGames+i),:] = board
+        playersArr[(nGames*2 + i*2):(nGames*2 + (i*2+2)),:] = players
+        controlVariablesArr[(nGames+i),:] = controlVariables
+        availableActionsArr[(nGames+i),:] = availableActions
+        initStacksArr[(nGames+i),:] = initStacks
+        
+    return boardsArr, playersArr, controlVariablesArr, availableActionsArr, initStacksArr
     
-    initGameStates.availableActions = np.repeat(initGameStates.availableActions, N_RND_PLAYS_PER_HAND, axis=0)
-    initGameStates.boards = np.repeat(initGameStates.boards, N_RND_PLAYS_PER_HAND, axis=0)
-    initGameStates.controlVariables = np.repeat(initGameStates.controlVariables, N_RND_PLAYS_PER_HAND, axis=0)
-    initGameStates.players = GameDataContainer.unflattenPlayersData(np.repeat(
-            GameDataContainer.flattenPlayersData(initGameStates.players), N_RND_PLAYS_PER_HAND, axis=0))
-    initGameStates.validMask = np.repeat(initGameStates.validMask, N_RND_PLAYS_PER_HAND, axis=0)
-    initGameStates.validMaskPlayers = np.repeat(initGameStates.validMaskPlayers, N_RND_PLAYS_PER_HAND, axis=0)
-    initStacks = np.repeat(initStacks, N_RND_PLAYS_PER_HAND, axis=0)
+
+
+initGameStates, initStacks = initRandomGames(N_HANDS_FOR_EVAL)
+
+
+
+    
+    # %%
+    
+    
+#    initGameStates, initStacks = initRandomGames(N_HANDS_FOR_EVAL)
+#    initGameStates.availableActions = np.repeat(initGameStates.availableActions, N_RND_PLAYS_PER_HAND, axis=0)
+#    initGameStates.boards = np.repeat(initGameStates.boards, N_RND_PLAYS_PER_HAND, axis=0)
+#    initGameStates.controlVariables = np.repeat(initGameStates.controlVariables, N_RND_PLAYS_PER_HAND, axis=0)
+#    initGameStates.players = GameDataContainer.unflattenPlayersData(np.repeat(
+#            GameDataContainer.flattenPlayersData(initGameStates.players), N_RND_PLAYS_PER_HAND, axis=0))
+#    initGameStates.validMask = np.repeat(initGameStates.validMask, N_RND_PLAYS_PER_HAND, axis=0)
+#    initGameStates.validMaskPlayers = np.repeat(initGameStates.validMaskPlayers, N_RND_PLAYS_PER_HAND, axis=0)
+#    initStacks = np.repeat(initStacks, N_RND_PLAYS_PER_HAND, axis=0)
+    
+    
     
     populationFitness, bestFitness = [], []
     
+
     
+    popIdx = 0
     
-#    N = 20000
-#    states = GameState(initGameStates.boards[:N], initGameStates.players[:N*2], initGameStates.controlVariables[:N],
-#                       initGameStates.availableActions[:N])
-#    stacks = initStacks[:N]
-#    blinds = states.boards[:,1]
-    blinds = initGameStates.boards[:,1]
+    curPopulation = populations[popIdx]
+    opponentPopulations = populations[np.delete(np.arange(len(populations)), popIdx)]
+    opponentModels = np.array([pop.bestModel for pop in opponentPopulations])
     
-    finalGameStates = playGames(copy.deepcopy(initGameStates), (models[98], models[67]), WIN_LEN)
-    
-#    winAmounts = getWinAmounts(finalGameStates, stacks) / blinds.reshape((-1,1))
-    winAmounts = getWinAmounts(finalGameStates, initStacks) / blinds.reshape((-1,1))
-    
-    print(np.mean(winAmounts,0))
-    
-    assert np.sum(winAmounts) == 0
-    
-# %%
-    
-    for k in range(50):
-        
-        
-        states, stacks = initRandomGames(int(N_HANDS_FOR_EVAL*0.25))
-        rndIdx = np.random.choice(N_HANDS_FOR_EVAL, size=len(stacks), replace=0)
-        
-        initStacks[rndIdx] = stacks
-        
-        initGameStates.availableActions[rndIdx] = states.availableActions
-        initGameStates.boards[rndIdx] = states.boards
-        initGameStates.controlVariables[rndIdx] = states.controlVariables
-        rndIdx2 = np.repeat(rndIdx*2, 2)
-        rndIdx2[1::2] = rndIdx*2+1
-        initGameStates.players[rndIdx2] = states.players
+    N_OPTIMIZATION_ITERS = 5
+    for k in range(N_OPTIMIZATION_ITERS):
         
         
         
+#        states, stacks = initRandomGames(int(N_HANDS_FOR_EVAL*0.25))
+#        rndIdx = np.random.choice(N_HANDS_FOR_EVAL, size=len(stacks), replace=0)
+#        
+#        initStacks[rndIdx] = stacks
+#        
+#        initGameStates.availableActions[rndIdx] = states.availableActions
+#        initGameStates.boards[rndIdx] = states.boards
+#        initGameStates.controlVariables[rndIdx] = states.controlVariables
+#        rndIdx2 = np.repeat(rndIdx*2, 2)
+#        rndIdx2[1::2] = rndIdx*2+1
+#        initGameStates.players[rndIdx2] = states.players
         
         
-        # Play games
-        finalGameStates = playGamesParallel(initGameStates, models, N_CORES, WIN_LEN, RND_AGENT_IDX, 
-                                            AI_AGENT_IDX)
-        assert len(finalGameStates) == POPULATION_SIZE
         
-        modelWinAmounts = getWinAmountsForModels(finalGameStates, initStacks, AI_AGENT_IDX)
+        # Play games 
+        modelWinAmounts = []
+        for opponentModel in opponentModels:
+            finalGameStates = playGamesParallel(initGameStates, curPopulation.models, opponentModel, 
+                                                N_CORES, WIN_LEN)
+            assert len(finalGameStates) == POPULATION_SIZE
+            modelWinAmounts.append(getWinAmountsForModels(finalGameStates, initStacks, 0))
+        modelWinAmounts = np.column_stack((modelWinAmounts))
         
-        modelFitness = [np.mean(amounts) for amounts in modelWinAmounts]
-        
+        modelFitness = np.mean(modelWinAmounts,1)
         sorter = np.argsort(modelFitness)
         bestIdx = sorter[-int(len(sorter)*RATIO_BEST_INDIVIDUALS):]
-    
-    
-    
-        replayGameStates, replayStacks = initRandomGames(N_HANDS_FOR_RE_EVAL)
-        replayFinalGameStates = playGamesParallel(replayGameStates, models[bestIdx], N_CORES, WIN_LEN, 
-                                                  RND_AGENT_IDX, AI_AGENT_IDX)
-        assert len(finalGameStates) == POPULATION_SIZE
-        replayModelWinAmounts = getWinAmountsForModels(replayFinalGameStates, replayStacks, AI_AGENT_IDX)
-        replayModelFitness = [np.mean(np.concatenate((amounts,amounts2))) \
-            for amounts,amounts2 in zip(replayModelWinAmounts,modelWinAmounts)]
-#        print(np.argsort(replayModelFitness))
-        bestIdx = bestIdx[np.argsort(replayModelFitness)]
-
-        [np.mean(np.concatenate((amounts,amounts2))) \
-             for amounts,amounts2 in zip(replayModelWinAmounts,modelWinAmounts)]
         
+        curPopulation.bestModel = curPopulation.models[bestIdx[-1]]
+    
         populationFitness.append(np.mean(modelFitness))
-        bestFitness.append(np.max(replayModelFitness))
+        bestFitness.append(np.max(modelFitness))        
+        print(k, np.mean(modelFitness), np.max(modelFitness))
+
+        # If last round skip mutation because we want to know which one is the best model in the current
+        # population
+        if(k == N_OPTIMIZATION_ITERS-1):
+            break
         
-        print('................................')
-        print(k, np.mean(modelFitness), np.max(replayModelFitness))
+#        replayGameStates, replayStacks = initRandomGames(N_HANDS_FOR_RE_EVAL)
+#        replayFinalGameStates = playGamesParallel(replayGameStates, models[bestIdx], opponent, N_CORES, WIN_LEN)
+#        assert len(replayFinalGameStates) == len(bestIdx)
+#        replayModelWinAmounts = getWinAmountsForModels(replayFinalGameStates, replayStacks, 0)
+#        replayModelFitness = [np.mean(np.concatenate((amounts,amounts2))) \
+#            for amounts,amounts2 in zip(replayModelWinAmounts,modelWinAmounts)]
+##        print(np.argsort(replayModelFitness))
+#        bestIdx = bestIdx[np.argsort(replayModelFitness)]
+#        
+#        populationFitness.append(np.mean(modelFitness))
+#        bestFitness.append(np.max(replayModelFitness))        
+#        print(k, np.mean(modelFitness), np.max(replayModelFitness))
+
     
         # Save data
     
         # Put the best individual without mutation to the next generation
         nextGeneration = []
-        nextGeneration = [models[idx] for idx in bestIdx[-3:]]
+        nextGeneration = [curPopulation.models[idx] for idx in bestIdx[-3:]]
         
         # Mutate
         for i in range(POPULATION_SIZE-len(nextGeneration)):
             idx = bestIdx[np.random.randint(len(bestIdx))]
             
-            model = copy.deepcopy(models[idx])
+            model = copy.deepcopy(curPopulation.models[idx])
             model.mutate(MUTATION_SIGMA, ratio=MUTATION_RATIO)
             
             nextGeneration.append(model)
         
-        models = np.array(nextGeneration)
+        curPopulation.models = np.array(nextGeneration)
             
     
-    n = 5
-    plt.plot(populationFitness[n:])
-    plt.plot(bestFitness[n:])
+#    n = 0
+#    plt.plot(populationFitness[n:])
+#    plt.plot(bestFitness[n:])
     
     
     # %%
