@@ -390,12 +390,10 @@ class Population():
     
     
     device = torch.device('cpu')
+    pool = mp.Pool(N_CORES)
     
     populations = np.array([Population(POPULATION_SIZE, WIN_LEN) for _ in range(N_POPULATIONS)])
     
-#    populations = np.array([None for _ in range(N_POPULATIONS)])
-    
-    pool = mp.Pool(N_CORES)
 
 
         
@@ -444,20 +442,6 @@ class Population():
             # population
             if(k == N_OPTIMIZATION_ITERS-1):
                 break
-            
-    #        replayGameStates, replayStacks = initRandomGames(N_HANDS_FOR_RE_EVAL)
-    #        replayFinalGameStates = playGamesParallel(replayGameStates, models[bestIdx], opponent, N_CORES, WIN_LEN)
-    #        assert len(replayFinalGameStates) == len(bestIdx)
-    #        replayModelWinAmounts = getWinAmountsForModels(replayFinalGameStates, replayStacks, 0)
-    #        replayModelFitness = [np.mean(np.concatenate((amounts,amounts2))) \
-    #            for amounts,amounts2 in zip(replayModelWinAmounts,modelWinAmounts)]
-    ##        print(np.argsort(replayModelFitness))
-    #        bestIdx = bestIdx[np.argsort(replayModelFitness)]
-    #        
-    #        populationFitness.append(np.mean(modelFitness))
-    #        bestFitness.append(np.max(replayModelFitness))        
-    #        print(k, np.mean(modelFitness), np.max(replayModelFitness))
-    
         
             # Save data
         
