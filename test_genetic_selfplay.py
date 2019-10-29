@@ -242,6 +242,8 @@ def playGamesParallel(initGameStates, modelsPopulation, modelOpponent, nCores, w
     orderNum = np.array([res[1] for res in results])
     sorter = np.argsort(orderNum)
     finalGameStates = np.array([res[0] for res in results])
+    
+    pool.close()
 
     return finalGameStates[sorter]
 
@@ -305,8 +307,12 @@ class AiModel(nn.Module):
         super(AiModel, self).__init__()
         
         self.layers = nn.Sequential(
-            nn.Linear(7*(winLen+17), 250),
-            nn.ReLU(),
+            nn.Linear(7*(winLen+17), 250), nn.ReLU(),
+            nn.Linear(250, 250), nn.ReLU(),
+            nn.Linear(250, 250), nn.ReLU(),
+            nn.Linear(250, 250), nn.ReLU(),
+            nn.Linear(250, 250), nn.ReLU(),
+            nn.Linear(250, 250), nn.ReLU(),
             nn.Linear(250, 10))
         
         # Get references to weights and biases. These are used when mutating the model.
@@ -376,8 +382,8 @@ class Population():
     N_POPULATIONS = 3
     POPULATION_SIZE = 100
     RATIO_BEST_INDIVIDUALS = 0.10
-    MUTATION_SIGMA = 1.0e-3
-    MUTATION_RATIO = 0.1
+    MUTATION_SIGMA = 1.0e-4
+    MUTATION_RATIO = 1.0
     
     N_HANDS_FOR_EVAL = 20000
 #    N_HANDS_FOR_RE_EVAL = 30000
@@ -391,10 +397,6 @@ class Population():
     populations = np.array([Population(POPULATION_SIZE, WIN_LEN) for _ in range(N_POPULATIONS)])
     
 
-#    models = []
-#    for i in range(POPULATION_SIZE):
-#        models.append(AiModel(WIN_LEN).to(device))
-#    models = np.array(models)
 
         
 # %%
@@ -418,7 +420,7 @@ class Population():
     opponentPopulations = populations[np.delete(np.arange(len(populations)), popIdx)]
     opponentModels = np.array([pop.bestModel for pop in opponentPopulations])
     
-    N_OPTIMIZATION_ITERS = 2
+    N_OPTIMIZATION_ITERS = 1
     for k in range(N_OPTIMIZATION_ITERS):
         
         
@@ -486,8 +488,8 @@ class Population():
             idx = bestIdx[np.random.randint(len(bestIdx))]
             
             model = copy.deepcopy(curPopulation.models[idx])
-#            model.mutateAllLayers(MUTATION_SIGMA, ratio=MUTATION_RATIO)
-            model.mutateOneLayer(MUTATION_SIGMA, ratio=MUTATION_RATIO)
+            model.mutateAllLayers(MUTATION_SIGMA, ratio=MUTATION_RATIO)
+#            model.mutateOneLayer(MUTATION_SIGMA, ratio=MUTATION_RATIO)
             
             
             nextGeneration.append(model)
