@@ -19,12 +19,11 @@ import torch
 torch.set_num_threads(1)
 import torch.nn as nn
 
-sys.path.append('/home/juho/dev_folder/')
-from holdem_hu_bot.agents import generateRndActions
-from holdem_hu_bot.game_data_container import GameDataContainer
+sys.path.append('/home/juho/dev_folder/asdf/')
 from holdem_hu_bot.common_stuff import suitsOnehotLut, ranksOnehotLut
 from texas_hu_engine.wrappers import executeActions, createActionsToExecute, GameState
 from texas_hu_engine.engine_numba import initGame
+
 
 
 
@@ -231,10 +230,10 @@ def playGamesWrapper(gameStates, models, WIN_LEN, idx):
     return (playGames(gameStates, models, WIN_LEN), idx)
 
 
-def playGamesParallel(initGameStates, modelsPopulation, modelOpponent, nCores, winLen):
-    pool = mp.Pool(nCores)
+def playGamesParallel(pool, initGameStates, modelsPopulation, modelOpponent, nCores, winLen):
     result_objects = [pool.apply_async(playGamesWrapper, args=(copy.deepcopy(initGameStates), 
-                                                               (modelsPopulation[i], modelOpponent), winLen, i)) 
+                                                               (copy.deepcopy(modelsPopulation[i]), 
+                                                                copy.deepcopy(modelOpponent)), winLen, i)) 
                                                             for i in range(len(modelsPopulation))]
     results = [r.get() for r in result_objects]
 
@@ -242,8 +241,6 @@ def playGamesParallel(initGameStates, modelsPopulation, modelOpponent, nCores, w
     orderNum = np.array([res[1] for res in results])
     sorter = np.argsort(orderNum)
     finalGameStates = np.array([res[0] for res in results])
-    
-    pool.close()
 
     return finalGameStates[sorter]
 
@@ -396,6 +393,9 @@ class Population():
     
     populations = np.array([Population(POPULATION_SIZE, WIN_LEN) for _ in range(N_POPULATIONS)])
     
+#    populations = np.array([None for _ in range(N_POPULATIONS)])
+    
+    pool = mp.Pool(N_CORES)
 
 
         
@@ -404,105 +404,91 @@ class Population():
 
     initGameStates, initStacks = initRandomGames(N_HANDS_FOR_EVAL)
 
+    populationFitness, bestFitness = [], []
+
+    # %%
+
+    
+#    for popIdx in range(len(populations)):
+#        print(popIdx)
+        
+        popIdx = 2
+        
+        curPopulation = populations[popIdx]
+        opponentPopulations = populations[np.delete(np.arange(len(populations)), popIdx)]
+        opponentModels = np.array([pop.bestModel for pop in opponentPopulations])
+        
+        N_OPTIMIZATION_ITERS = 7
+        for k in range(N_OPTIMIZATION_ITERS):
+            
+            # Play games 
+            modelWinAmounts = []
+            for opponentModel in opponentModels:
+                finalGameStates = playGamesParallel(pool, initGameStates, curPopulation.models, opponentModel,
+                                                    N_CORES, WIN_LEN)
+                assert len(finalGameStates) == POPULATION_SIZE
+                modelWinAmounts.append(getWinAmountsForModels(finalGameStates, initStacks, 0))
+            modelWinAmounts = np.column_stack((modelWinAmounts))
+            
+            modelFitness = np.mean(modelWinAmounts,1)
+            sorter = np.argsort(modelFitness)
+            bestIdx = sorter[-int(len(sorter)*RATIO_BEST_INDIVIDUALS):]
+            
+            curPopulation.bestModel = curPopulation.models[bestIdx[-1]]
+        
+            populationFitness.append(np.mean(modelFitness))
+            bestFitness.append(np.max(modelFitness))        
+            print(k, np.mean(modelFitness), np.max(modelFitness))
+    
+            # If last round skip mutation because we want to know which one is the best model in the current
+            # population
+            if(k == N_OPTIMIZATION_ITERS-1):
+                break
+            
+    #        replayGameStates, replayStacks = initRandomGames(N_HANDS_FOR_RE_EVAL)
+    #        replayFinalGameStates = playGamesParallel(replayGameStates, models[bestIdx], opponent, N_CORES, WIN_LEN)
+    #        assert len(replayFinalGameStates) == len(bestIdx)
+    #        replayModelWinAmounts = getWinAmountsForModels(replayFinalGameStates, replayStacks, 0)
+    #        replayModelFitness = [np.mean(np.concatenate((amounts,amounts2))) \
+    #            for amounts,amounts2 in zip(replayModelWinAmounts,modelWinAmounts)]
+    ##        print(np.argsort(replayModelFitness))
+    #        bestIdx = bestIdx[np.argsort(replayModelFitness)]
+    #        
+    #        populationFitness.append(np.mean(modelFitness))
+    #        bestFitness.append(np.max(replayModelFitness))        
+    #        print(k, np.mean(modelFitness), np.max(replayModelFitness))
+    
+        
+            # Save data
+        
+        
+            # Put the best individual without mutation to the next generation
+            nextGeneration = []
+            nextGeneration = [curPopulation.models[idx] for idx in bestIdx[-3:]]
+            
+            # Mutate
+            for i in range(POPULATION_SIZE-len(nextGeneration)):
+                idx = bestIdx[np.random.randint(len(bestIdx))]
+                
+                model = copy.deepcopy(curPopulation.models[idx])
+                model.mutateAllLayers(MUTATION_SIGMA, ratio=MUTATION_RATIO)
+    #            model.mutateOneLayer(MUTATION_SIGMA, ratio=MUTATION_RATIO)
+                
+                
+                nextGeneration.append(model)
+            
+            curPopulation.models = np.array(nextGeneration)
+                
+        
+    #    n = 0
+    #    plt.plot(populationFitness[n:])
+    #    plt.plot(bestFitness[n:])
+            
+    
+    
     # %%
     
-    import time
-    
-    t1 = time.time()
-    
-    populationFitness, bestFitness = [], []
-    
-
-    
-    popIdx = 0
-    
-    curPopulation = populations[popIdx]
-    opponentPopulations = populations[np.delete(np.arange(len(populations)), popIdx)]
-    opponentModels = np.array([pop.bestModel for pop in opponentPopulations])
-    
-    N_OPTIMIZATION_ITERS = 1
-    for k in range(N_OPTIMIZATION_ITERS):
-        
-        
-        
-#        states, stacks = initRandomGames(int(N_HANDS_FOR_EVAL*0.25))
-#        rndIdx = np.random.choice(N_HANDS_FOR_EVAL, size=len(stacks), replace=0)
-#        
-#        initStacks[rndIdx] = stacks
-#        
-#        initGameStates.availableActions[rndIdx] = states.availableActions
-#        initGameStates.boards[rndIdx] = states.boards
-#        initGameStates.controlVariables[rndIdx] = states.controlVariables
-#        rndIdx2 = np.repeat(rndIdx*2, 2)
-#        rndIdx2[1::2] = rndIdx*2+1
-#        initGameStates.players[rndIdx2] = states.players
-        
-        
-        
-        # Play games 
-        modelWinAmounts = []
-        for opponentModel in opponentModels:
-            finalGameStates = playGamesParallel(initGameStates, curPopulation.models, opponentModel, 
-                                                N_CORES, WIN_LEN)
-            assert len(finalGameStates) == POPULATION_SIZE
-            modelWinAmounts.append(getWinAmountsForModels(finalGameStates, initStacks, 0))
-        modelWinAmounts = np.column_stack((modelWinAmounts))
-        
-        modelFitness = np.mean(modelWinAmounts,1)
-        sorter = np.argsort(modelFitness)
-        bestIdx = sorter[-int(len(sorter)*RATIO_BEST_INDIVIDUALS):]
-        
-        curPopulation.bestModel = curPopulation.models[bestIdx[-1]]
-    
-        populationFitness.append(np.mean(modelFitness))
-        bestFitness.append(np.max(modelFitness))        
-        print(k, np.mean(modelFitness), np.max(modelFitness))
-
-        # If last round skip mutation because we want to know which one is the best model in the current
-        # population
-        if(k == N_OPTIMIZATION_ITERS-1):
-            break
-        
-#        replayGameStates, replayStacks = initRandomGames(N_HANDS_FOR_RE_EVAL)
-#        replayFinalGameStates = playGamesParallel(replayGameStates, models[bestIdx], opponent, N_CORES, WIN_LEN)
-#        assert len(replayFinalGameStates) == len(bestIdx)
-#        replayModelWinAmounts = getWinAmountsForModels(replayFinalGameStates, replayStacks, 0)
-#        replayModelFitness = [np.mean(np.concatenate((amounts,amounts2))) \
-#            for amounts,amounts2 in zip(replayModelWinAmounts,modelWinAmounts)]
-##        print(np.argsort(replayModelFitness))
-#        bestIdx = bestIdx[np.argsort(replayModelFitness)]
-#        
-#        populationFitness.append(np.mean(modelFitness))
-#        bestFitness.append(np.max(replayModelFitness))        
-#        print(k, np.mean(modelFitness), np.max(replayModelFitness))
-
-    
-        # Save data
-    
-        # Put the best individual without mutation to the next generation
-        nextGeneration = []
-        nextGeneration = [curPopulation.models[idx] for idx in bestIdx[-3:]]
-        
-        # Mutate
-        for i in range(POPULATION_SIZE-len(nextGeneration)):
-            idx = bestIdx[np.random.randint(len(bestIdx))]
-            
-            model = copy.deepcopy(curPopulation.models[idx])
-            model.mutateAllLayers(MUTATION_SIGMA, ratio=MUTATION_RATIO)
-#            model.mutateOneLayer(MUTATION_SIGMA, ratio=MUTATION_RATIO)
-            
-            
-            nextGeneration.append(model)
-        
-        curPopulation.models = np.array(nextGeneration)
-            
-    
-#    n = 0
-#    plt.plot(populationFitness[n:])
-#    plt.plot(bestFitness[n:])
-        
-    
-    print(time.time() - t1)
+    pool.close()
     
     
     # %%
