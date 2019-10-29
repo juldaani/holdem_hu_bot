@@ -23,8 +23,8 @@ sys.path.append('/home/juho/dev_folder/')
 from holdem_hu_bot.agents import generateRndActions
 from holdem_hu_bot.game_data_container import GameDataContainer
 from holdem_hu_bot.common_stuff import suitsOnehotLut, ranksOnehotLut
-from texas_hu_engine.wrappers import initRandomGames, executeActions, createActionsToExecute, GameState
-
+from texas_hu_engine.wrappers import executeActions, createActionsToExecute, GameState
+from texas_hu_engine.engine_numba import initGame
 
 
 
@@ -246,95 +246,6 @@ def playGamesParallel(initGameStates, modelsPopulation, modelOpponent, nCores, w
     return finalGameStates[sorter]
 
 
-class AiModel(nn.Module):
-    def __init__(self, winLen):
-        super(AiModel, self).__init__()
-        
-        self.layers = nn.Sequential(
-            nn.Linear(7*(winLen+17), 250),
-            nn.ReLU(),
-            nn.Linear(250, 10))
-        
-        # Get references to weights and biases. These are used when mutating the model.
-        self.weights, self.biases = [], []
-        for layer in self.layers:
-            # Hack. Throws an AttributeError if there is no weights associated for the layer, e.q., nn.Relu
-            try:
-                self.weights.append(layer.weight)
-                self.biases.append(layer.bias)
-            except AttributeError:
-                pass
-        
-    def forward(self, x):
-        x = self.layers(x)
-        return x
-
-    def mutateWeights(self, sigma, ratio=1.0):
-        for i in range(len(self.weights)):
-            w = self.weights[i].data.numpy().reshape(-1)
-            rndIdx = np.random.choice(len(w), size=max(1,int(ratio*len(w))), replace=0)
-            w[rndIdx] += np.random.normal(scale=sigma, size=len(rndIdx))
-
-    def mutateBiases(self, sigma, ratio=1.0):
-        for i in range(len(self.biases)):
-            b = self.biases[i].data.numpy().reshape(-1)
-            rndIdx = np.random.choice(len(b), size=max(1,int(ratio*len(b))), replace=0)
-            b[rndIdx] += np.random.normal(scale=sigma, size=len(rndIdx))
-            
-    def mutate(self, sigma, ratio=1.0):
-        self.mutateWeights(sigma, ratio=ratio)
-        self.mutateBiases(sigma, ratio=ratio)
-
-
-class Population():
-    def __init__(self, size, winLen):
-        device = torch.device('cpu')
-        
-        models = []
-        for i in range(size):
-            models.append(AiModel(winLen).to(device))
-        
-        self.models = np.array(models)
-        self.bestModel = models[np.random.randint(len(models))]
-
-
-#if __name__ == "__main__":
-    
-    # %%
-    
-    # Initialize agent
-    
-    #SEED = 123
-    N_CORES = 12
-    
-    N_POPULATIONS = 3
-    POPULATION_SIZE = 100
-    RATIO_BEST_INDIVIDUALS = 0.10
-    MUTATION_SIGMA = 1.0e-2
-    MUTATION_RATIO = 1.0
-    
-    N_HANDS_FOR_EVAL = 10000
-#    N_HANDS_FOR_RE_EVAL = 30000
-    N_RND_PLAYS_PER_HAND = 1
-    
-    WIN_LEN = 2
-    
-    
-    device = torch.device('cpu')
-    
-    populations = np.array([Population(POPULATION_SIZE, WIN_LEN) for _ in range(N_POPULATIONS)])
-    
-
-#    models = []
-#    for i in range(POPULATION_SIZE):
-#        models.append(AiModel(WIN_LEN).to(device))
-#    models = np.array(models)
-
-        
-# %%
-
-from texas_hu_engine.engine_numba import initGame
-
 def initRandomGames(nGames, seed=-1):
     boards, players, controlVariables, availableActions, initStacks = initGamesWrapper(nGames, seed=seed)
     
@@ -389,26 +300,113 @@ def initGamesWrapper(nGames, seed=-1):
     return boardsArr, playersArr, controlVariablesArr, availableActionsArr, initStacksArr
     
 
+class AiModel(nn.Module):
+    def __init__(self, winLen):
+        super(AiModel, self).__init__()
+        
+        self.layers = nn.Sequential(
+            nn.Linear(7*(winLen+17), 250),
+            nn.ReLU(),
+            nn.Linear(250, 10))
+        
+        # Get references to weights and biases. These are used when mutating the model.
+        self.weights, self.biases = [], []
+        for layer in self.layers:
+            # Hack. Throws an AttributeError if there is no weights associated for the layer, e.q., nn.Relu
+            try:
+                self.weights.append(layer.weight)
+                self.biases.append(layer.bias)
+            except AttributeError:
+                pass
+        
+    def forward(self, x):
+        x = self.layers(x)
+        return x
 
-initGameStates, initStacks = initRandomGames(N_HANDS_FOR_EVAL)
+    def mutate(self, weights, sigma, ratio):
+        w = weights.data.numpy().reshape(-1)
+        rndIdx = np.random.choice(len(w), size=max(1,int(ratio*len(w))), replace=0)
+        w[rndIdx] += np.random.normal(scale=sigma, size=len(rndIdx))
+
+    def mutateWeightsAllLayers(self, sigma, ratio):
+        for i in range(len(self.weights)):
+            self.mutate(self.weights[i], sigma, ratio)
+
+    def mutateBiasesAllLayers(self, sigma, ratio):
+        for i in range(len(self.biases)):
+            self.mutate(self.biases[i], sigma, ratio)
+
+    def mutateWeightsOneLayer(self, sigma, layerIdx, ratio):
+        self.mutate(self.weights[layerIdx], sigma, ratio)
+
+    def mutateBiasesOneLayer(self, sigma, layerIdx, ratio):
+        self.mutate(self.biases[layerIdx], sigma, ratio)
+    
+    def mutateOneLayer(self, sigma, ratio=1.0):
+        layerIdx = np.random.randint(len(self.weights))
+        self.mutateWeightsOneLayer(sigma, layerIdx, ratio)
+        self.mutateBiasesOneLayer(sigma, layerIdx, ratio)
+        
+    def mutateAllLayers(self, sigma, ratio=1.0):
+        self.mutateWeightsAllLayers(sigma, ratio=ratio)
+        self.mutateBiasesAllLayers(sigma, ratio=ratio)
 
 
+class Population():
+    def __init__(self, size, winLen):
+        device = torch.device('cpu')
+        
+        models = []
+        for i in range(size):
+            models.append(AiModel(winLen).to(device))
+        
+        self.models = np.array(models)
+        self.bestModel = models[np.random.randint(len(models))]
 
+
+#if __name__ == "__main__":
     
     # %%
     
+    # Initialize agent
     
-#    initGameStates, initStacks = initRandomGames(N_HANDS_FOR_EVAL)
-#    initGameStates.availableActions = np.repeat(initGameStates.availableActions, N_RND_PLAYS_PER_HAND, axis=0)
-#    initGameStates.boards = np.repeat(initGameStates.boards, N_RND_PLAYS_PER_HAND, axis=0)
-#    initGameStates.controlVariables = np.repeat(initGameStates.controlVariables, N_RND_PLAYS_PER_HAND, axis=0)
-#    initGameStates.players = GameDataContainer.unflattenPlayersData(np.repeat(
-#            GameDataContainer.flattenPlayersData(initGameStates.players), N_RND_PLAYS_PER_HAND, axis=0))
-#    initGameStates.validMask = np.repeat(initGameStates.validMask, N_RND_PLAYS_PER_HAND, axis=0)
-#    initGameStates.validMaskPlayers = np.repeat(initGameStates.validMaskPlayers, N_RND_PLAYS_PER_HAND, axis=0)
-#    initStacks = np.repeat(initStacks, N_RND_PLAYS_PER_HAND, axis=0)
+    #SEED = 123
+    N_CORES = 6
+    
+    N_POPULATIONS = 3
+    POPULATION_SIZE = 100
+    RATIO_BEST_INDIVIDUALS = 0.10
+    MUTATION_SIGMA = 1.0e-3
+    MUTATION_RATIO = 0.1
+    
+    N_HANDS_FOR_EVAL = 20000
+#    N_HANDS_FOR_RE_EVAL = 30000
+    N_RND_PLAYS_PER_HAND = 1
+    
+    WIN_LEN = 2
     
     
+    device = torch.device('cpu')
+    
+    populations = np.array([Population(POPULATION_SIZE, WIN_LEN) for _ in range(N_POPULATIONS)])
+    
+
+#    models = []
+#    for i in range(POPULATION_SIZE):
+#        models.append(AiModel(WIN_LEN).to(device))
+#    models = np.array(models)
+
+        
+# %%
+    
+
+    initGameStates, initStacks = initRandomGames(N_HANDS_FOR_EVAL)
+
+    # %%
+    
+    import time
+    
+    t1 = time.time()
     
     populationFitness, bestFitness = [], []
     
@@ -420,7 +418,7 @@ initGameStates, initStacks = initRandomGames(N_HANDS_FOR_EVAL)
     opponentPopulations = populations[np.delete(np.arange(len(populations)), popIdx)]
     opponentModels = np.array([pop.bestModel for pop in opponentPopulations])
     
-    N_OPTIMIZATION_ITERS = 5
+    N_OPTIMIZATION_ITERS = 2
     for k in range(N_OPTIMIZATION_ITERS):
         
         
@@ -488,7 +486,9 @@ initGameStates, initStacks = initRandomGames(N_HANDS_FOR_EVAL)
             idx = bestIdx[np.random.randint(len(bestIdx))]
             
             model = copy.deepcopy(curPopulation.models[idx])
-            model.mutate(MUTATION_SIGMA, ratio=MUTATION_RATIO)
+#            model.mutateAllLayers(MUTATION_SIGMA, ratio=MUTATION_RATIO)
+            model.mutateOneLayer(MUTATION_SIGMA, ratio=MUTATION_RATIO)
+            
             
             nextGeneration.append(model)
         
@@ -498,6 +498,9 @@ initGameStates, initStacks = initRandomGames(N_HANDS_FOR_EVAL)
 #    n = 0
 #    plt.plot(populationFitness[n:])
 #    plt.plot(bestFitness[n:])
+        
+    
+    print(time.time() - t1)
     
     
     # %%
