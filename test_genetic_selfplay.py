@@ -379,17 +379,16 @@ class Population():
     N_POPULATIONS = 3
     POPULATION_SIZE = 100
     RATIO_BEST_INDIVIDUALS = 0.10
-    MUTATION_SIGMA = 1.0e-4
-    MUTATION_RATIO = 1.0
+    MUTATION_SIGMA = 1.0e-2
+    MUTATION_RATIO = 0.25
     
-    N_HANDS_FOR_EVAL = 20000
+    N_HANDS_FOR_EVAL = 5000
 #    N_HANDS_FOR_RE_EVAL = 30000
     N_RND_PLAYS_PER_HAND = 1
     
     WIN_LEN = 2
     
     
-    device = torch.device('cpu')
     pool = mp.Pool(N_CORES)
     
     populations = np.array([Population(POPULATION_SIZE, WIN_LEN) for _ in range(N_POPULATIONS)])
@@ -416,7 +415,7 @@ class Population():
         opponentPopulations = populations[np.delete(np.arange(len(populations)), popIdx)]
         opponentModels = np.array([pop.bestModel for pop in opponentPopulations])
         
-        N_OPTIMIZATION_ITERS = 7
+        N_OPTIMIZATION_ITERS = 3
         for k in range(N_OPTIMIZATION_ITERS):
             
             # Play games 
@@ -455,8 +454,8 @@ class Population():
                 idx = bestIdx[np.random.randint(len(bestIdx))]
                 
                 model = copy.deepcopy(curPopulation.models[idx])
-                model.mutateAllLayers(MUTATION_SIGMA, ratio=MUTATION_RATIO)
-    #            model.mutateOneLayer(MUTATION_SIGMA, ratio=MUTATION_RATIO)
+#                model.mutateAllLayers(MUTATION_SIGMA, ratio=MUTATION_RATIO)
+                model.mutateOneLayer(MUTATION_SIGMA, ratio=MUTATION_RATIO)
                 
                 
                 nextGeneration.append(model)
