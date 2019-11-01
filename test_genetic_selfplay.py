@@ -153,16 +153,16 @@ def getWinAmounts(gameStates, initStacks):
     return finalStacks - initStacks
 
 
-def getWinAmountsForModels(gameStates, initStacks, agentIdx):
-    modelWinAmounts = []
+def getWinAmountsForAgents(gameStates, initStacks, agentIdx):
+    winAmounts = []
     for states in gameStates:
         smallBlinds = states.boards[:,1]
-        winAmounts = getWinAmounts(states, initStacks)
-        assert np.sum(winAmounts) == 0  # Check that games are zero-sum
-        winAmounts = winAmounts[:,agentIdx] / smallBlinds
-        modelWinAmounts.append(winAmounts)
+        tmpWinAmounts = getWinAmounts(states, initStacks)
+        assert np.sum(tmpWinAmounts) == 0  # Check that games are zero-sum
+        tmpWinAmounts = tmpWinAmounts[:,agentIdx] / smallBlinds
+        winAmounts.append(tmpWinAmounts)
         
-    return modelWinAmounts
+    return winAmounts
 
 
 def optimizeWinAmounts(modelWinAmounts):
@@ -174,39 +174,20 @@ def optimizeWinAmounts(modelWinAmounts):
     return modelWinAmounts
  
     
-def playGames(gameStates, models, WIN_LEN):
+def playGames(gameStates, agents, WIN_LEN):
     features = np.zeros((len(gameStates.boards), 7, WIN_LEN+17))
     actionsToExecute = np.zeros((len(gameStates.boards),2), dtype=np.int64) - 999
     
     while(1):
         
-        actionsForAgents, masksForAgents = [[] for _ in range(len(models))], [[] for _ in range(len(models))]
-        for idxAgent, model in enumerate(models):
-            maskAgent, _, _, _, = getMasks(gameStates, idxAgent)
-            
-            features = computeFeaturesNb(gameStates.boards, gameStates.players, WIN_LEN, maskAgent, features)
-            featuresScaled = scaler(features[maskAgent], WIN_LEN)
-            featuresScaled = featuresScaled.reshape((len(featuresScaled), 
-                                                     featuresScaled.shape[1]*featuresScaled.shape[2]))
-        
-            # Calculate model outputs
-            with torch.no_grad():
-                featuresScaled = torch.from_numpy(featuresScaled).float()
-                modelOutput = model(featuresScaled).numpy()
-            if(len(modelOutput) == 0):
-                modelOutput = np.zeros((0,10), dtype=np.float)
-        
-            # Convert model outputs into actions
-            smallBlinds = gameStates.boards[maskAgent,1]
-            pots = features[:, 4, WIN_LEN-1][maskAgent]
-            pots = (pots * smallBlinds).astype(np.int)
-            availableActions = gameStates.availableActions[maskAgent]
-            agentActions = modelOutputsToActions(modelOutput, pots, availableActions)
-            
+        actionsForAgents, masksForAgents = [[] for _ in range(len(agents))], [[] for _ in range(len(agents))]
+        for idxAgent, agent in enumerate(agents):
+            agentActions, maskAgent, features = agent.getActions(gameStates, idxAgent, features, WIN_LEN)
+
             actionsForAgents[idxAgent] = agentActions
             masksForAgents[idxAgent] = maskAgent
         
-        # Put actions from models together
+        # Put actions together
         actionsToExecute[:] = -999
         actionsToExecute[masksForAgents[0]] = actionsForAgents[0]
         actionsToExecute[masksForAgents[1]] = actionsForAgents[1]
@@ -226,15 +207,15 @@ def playGames(gameStates, models, WIN_LEN):
     return gameStates
 
     
-def playGamesWrapper(gameStates, models, WIN_LEN, idx):
-    return (playGames(gameStates, models, WIN_LEN), idx)
+def playGamesWrapper(gameStates, agents, WIN_LEN, idx):
+    return (playGames(gameStates, agents, WIN_LEN), idx)
 
 
-def playGamesParallel(pool, initGameStates, modelsPopulation, modelOpponent, nCores, winLen):
+def playGamesParallel(pool, initGameStates, agentsPopulation, agentOpponent, nCores, winLen):
     result_objects = [pool.apply_async(playGamesWrapper, args=(copy.deepcopy(initGameStates), 
-                                                               (copy.deepcopy(modelsPopulation[i]), 
-                                                                copy.deepcopy(modelOpponent)), winLen, i)) 
-                                                            for i in range(len(modelsPopulation))]
+                                                               (copy.deepcopy(agentsPopulation[i]), 
+                                                                copy.deepcopy(agentOpponent)), winLen, i)) 
+                                                            for i in range(len(agentsPopulation))]
     results = [r.get() for r in result_objects]
 
     # Sort results because it is not quaranteed that apply_async returns them in correct order
@@ -359,14 +340,42 @@ class Population():
     def __init__(self, size, winLen):
         device = torch.device('cpu')
         
-        models = []
+        agents = []
         for i in range(size):
-            models.append(AiModel(winLen).to(device))
+            agents.append(AiAgent(AiModel(winLen).to(device)))
         
-        self.models = np.array(models)
-        self.bestModel = models[np.random.randint(len(models))]
+        self.agents = np.array(agents)
+        self.bestAgent = agents[np.random.randint(len(agents))]
 
 
+class AiAgent():
+    def __init__(self, model):
+        self.model = model
+    
+    def getActions(self, gameStates, idxAgent, features, winLen):
+        maskAgent, _, _, _, = getMasks(gameStates, idxAgent)
+        
+        features = computeFeaturesNb(gameStates.boards, gameStates.players, winLen, maskAgent, features)
+        featuresScaled = scaler(features[maskAgent], winLen)
+        featuresScaled = featuresScaled.reshape((len(featuresScaled), 
+                                                 featuresScaled.shape[1]*featuresScaled.shape[2]))
+    
+        # Calculate model outputs
+        with torch.no_grad():
+            featuresScaled = torch.from_numpy(featuresScaled).float()
+            modelOutput = self.model(featuresScaled).numpy()
+        if(len(modelOutput) == 0):
+            modelOutput = np.zeros((0,10), dtype=np.float)
+    
+        # Convert model outputs into actions
+        smallBlinds = gameStates.boards[maskAgent,1]
+        pots = features[:, 4, WIN_LEN-1][maskAgent]
+        pots = (pots * smallBlinds).astype(np.int)
+        availableActions = gameStates.availableActions[maskAgent]
+        agentActions = modelOutputsToActions(modelOutput, pots, availableActions)
+    
+        return agentActions, maskAgent, features
+        
 #if __name__ == "__main__":
     
     # %%
@@ -401,7 +410,7 @@ class Population():
 
     initGameStates, initStacks = initRandomGames(N_HANDS_FOR_EVAL)
 
-    populationFitness, bestFitness = [], []
+#    populationFitness, bestFitness = [], []
 
     # %%
 
@@ -409,33 +418,33 @@ class Population():
 #    for popIdx in range(len(populations)):
 #        print(popIdx)
         
-        popIdx = 2
+        popIdx = 1
         
         curPopulation = populations[popIdx]
         opponentPopulations = populations[np.delete(np.arange(len(populations)), popIdx)]
-        opponentModels = np.array([pop.bestModel for pop in opponentPopulations])
+        opponentAgents = np.array([pop.bestAgent for pop in opponentPopulations])
         
-        N_OPTIMIZATION_ITERS = 3
+        N_OPTIMIZATION_ITERS = 10
         for k in range(N_OPTIMIZATION_ITERS):
             
             # Play games 
-            modelWinAmounts = []
-            for opponentModel in opponentModels:
-                finalGameStates = playGamesParallel(pool, initGameStates, curPopulation.models, opponentModel,
+            winAmounts = []
+            for opponentAgent in opponentAgents:
+                finalGameStates = playGamesParallel(pool, initGameStates, curPopulation.agents, opponentAgent,
                                                     N_CORES, WIN_LEN)
                 assert len(finalGameStates) == POPULATION_SIZE
-                modelWinAmounts.append(getWinAmountsForModels(finalGameStates, initStacks, 0))
-            modelWinAmounts = np.column_stack((modelWinAmounts))
+                winAmounts.append(getWinAmountsForAgents(finalGameStates, initStacks, 0))
+            winAmounts = np.column_stack((winAmounts))
             
-            modelFitness = np.mean(modelWinAmounts,1)
-            sorter = np.argsort(modelFitness)
+            agentFitness = np.mean(winAmounts,1)
+            sorter = np.argsort(agentFitness)
             bestIdx = sorter[-int(len(sorter)*RATIO_BEST_INDIVIDUALS):]
             
-            curPopulation.bestModel = curPopulation.models[bestIdx[-1]]
+            curPopulation.bestAgent = curPopulation.agents[bestIdx[-1]]
         
-            populationFitness.append(np.mean(modelFitness))
-            bestFitness.append(np.max(modelFitness))        
-            print(k, np.mean(modelFitness), np.max(modelFitness))
+#            populationFitness.append(np.mean(modelFitness))
+#            bestFitness.append(np.max(modelFitness))        
+            print(k, np.mean(agentFitness), np.max(agentFitness))
     
             # If last round skip mutation because we want to know which one is the best model in the current
             # population
@@ -447,20 +456,19 @@ class Population():
         
             # Put the best individual without mutation to the next generation
             nextGeneration = []
-            nextGeneration = [curPopulation.models[idx] for idx in bestIdx[-3:]]
+            nextGeneration = [curPopulation.agents[idx] for idx in bestIdx[-3:]]
             
             # Mutate
             for i in range(POPULATION_SIZE-len(nextGeneration)):
                 idx = bestIdx[np.random.randint(len(bestIdx))]
                 
-                model = copy.deepcopy(curPopulation.models[idx])
+                agent = copy.deepcopy(curPopulation.agents[idx])
 #                model.mutateAllLayers(MUTATION_SIGMA, ratio=MUTATION_RATIO)
-                model.mutateOneLayer(MUTATION_SIGMA, ratio=MUTATION_RATIO)
+                agent.model.mutateOneLayer(MUTATION_SIGMA, ratio=MUTATION_RATIO)
                 
-                
-                nextGeneration.append(model)
+                nextGeneration.append(agent)
             
-            curPopulation.models = np.array(nextGeneration)
+            curPopulation.agents = np.array(nextGeneration)
                 
         
     #    n = 0
