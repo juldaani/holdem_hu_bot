@@ -23,6 +23,7 @@ sys.path.append('/home/juho/dev_folder/asdf/')
 from holdem_hu_bot.common_stuff import suitsOnehotLut, ranksOnehotLut
 from texas_hu_engine.wrappers import executeActions, createActionsToExecute, GameState
 from texas_hu_engine.engine_numba import initGame
+from holdem_hu_bot.agents import generateRndActions
 
 
 
@@ -369,13 +370,27 @@ class AiAgent():
     
         # Convert model outputs into actions
         smallBlinds = gameStates.boards[maskAgent,1]
-        pots = features[:, 4, WIN_LEN-1][maskAgent]
+        pots = features[:, 4, winLen-1][maskAgent]
         pots = (pots * smallBlinds).astype(np.int)
         availableActions = gameStates.availableActions[maskAgent]
         agentActions = modelOutputsToActions(modelOutput, pots, availableActions)
     
         return agentActions, maskAgent, features
-        
+
+
+class CallAgent():
+    def __init__(self):
+        pass
+    
+    def getActions(self, gameStates, idxAgent, features, winLen):
+        maskAgent, _, _, _, = getMasks(gameStates, idxAgent)
+        actionsAgent = np.zeros((np.sum(maskAgent),2))-1
+        actionsAgent[:,1] = gameStates.availableActions[maskAgent,0]   # Only call
+
+        return actionsAgent, maskAgent, features
+
+
+    
 #if __name__ == "__main__":
     
     # %%
@@ -384,18 +399,20 @@ class AiAgent():
     
     #SEED = 123
     N_CORES = 6
+    WIN_LEN = 2
     
-    N_POPULATIONS = 3
+    N_POPULATIONS = 5
     POPULATION_SIZE = 100
+    OPTIMIZATION_ITERS_PER_POPULATION = 5
     RATIO_BEST_INDIVIDUALS = 0.10
     MUTATION_SIGMA = 1.0e-2
     MUTATION_RATIO = 0.25
     
-    N_HANDS_FOR_EVAL = 5000
-#    N_HANDS_FOR_RE_EVAL = 30000
-    N_RND_PLAYS_PER_HAND = 1
+    N_HANDS_FOR_EVAL = 50000
+    N_HANDS_FOR_OPTIMIZATION = 5000
+    N_ITERS_GENERATE_NEW_HANDS = 5
+    N_ITERS_BETWEEN_EVALS = 5
     
-    WIN_LEN = 2
     
     
     pool = mp.Pool(N_CORES)
@@ -408,24 +425,45 @@ class AiAgent():
 # %%
     
 
-    initGameStates, initStacks = initRandomGames(N_HANDS_FOR_EVAL)
 
 #    populationFitness, bestFitness = [], []
 
     # %%
 
-    
-#    for popIdx in range(len(populations)):
-#        print(popIdx)
+    c = -1
+    while(1):
+        c += 1
         
-        popIdx = 1
+        
+        if(c % N_ITERS_GENERATE_NEW_HANDS == 0):
+            initGameStates, initStacks = initRandomGames(N_HANDS_FOR_OPTIMIZATION)
+        
+        
+        
+        # Evaluate populations
+        if(c % N_ITERS_BETWEEN_EVALS == 0):
+            print('\n.......................')
+            print('Win amounts:')
+            
+            evalGameStates, evalStacks = initRandomGames(N_HANDS_FOR_EVAL)
+            
+            for ii, pop in enumerate(populations):
+                finalGameStates = playGames(copy.deepcopy(evalGameStates), (pop.bestAgent, CallAgent()), WIN_LEN)
+                agentWinAmounts = np.mean(getWinAmountsForAgents([finalGameStates], evalStacks, 0))
+                print(str(ii) + ' population: ' + str(agentWinAmounts))
+            
+            print('.......................\n')
+
+            
+        
+        
+        popIdx = np.random.randint(N_POPULATIONS)
         
         curPopulation = populations[popIdx]
         opponentPopulations = populations[np.delete(np.arange(len(populations)), popIdx)]
         opponentAgents = np.array([pop.bestAgent for pop in opponentPopulations])
         
-        N_OPTIMIZATION_ITERS = 10
-        for k in range(N_OPTIMIZATION_ITERS):
+        for optIter in range(OPTIMIZATION_ITERS_PER_POPULATION):
             
             # Play games 
             winAmounts = []
@@ -444,15 +482,15 @@ class AiAgent():
         
 #            populationFitness.append(np.mean(modelFitness))
 #            bestFitness.append(np.max(modelFitness))        
-            print(k, np.mean(agentFitness), np.max(agentFitness))
+            print(optIter, np.mean(agentFitness), np.max(agentFitness))
     
             # If last round skip mutation because we want to know which one is the best model in the current
             # population
-            if(k == N_OPTIMIZATION_ITERS-1):
+            if(optIter == OPTIMIZATION_ITERS_PER_POPULATION-1):
                 break
         
             # Save data
-        
+            
         
             # Put the best individual without mutation to the next generation
             nextGeneration = []
