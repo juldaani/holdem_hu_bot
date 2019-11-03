@@ -10,10 +10,10 @@ Created on Sat May 25 23:08:15 2019
 
 import numpy as np
 from numba import jit, njit, prange
-import copy
 import matplotlib.pyplot as plt
-import sys
+import sys, os, copy, shutil
 import multiprocessing as mp
+from datetime import datetime
 
 import torch
 torch.set_num_threads(1)
@@ -395,7 +395,9 @@ class CallAgent():
     
     # %%
     
-    # Initialize agent
+    # Parameters        
+    # ..................................................................
+    PATH_SAVE_RESULTS = '/home/juho/dev_folder/asdf/data/'
     
     #SEED = 123
     N_CORES = 6
@@ -403,17 +405,32 @@ class CallAgent():
     
     N_POPULATIONS = 5
     POPULATION_SIZE = 100
-    OPTIMIZATION_ITERS_PER_POPULATION = 5
     RATIO_BEST_INDIVIDUALS = 0.10
     MUTATION_SIGMA = 1.0e-2
     MUTATION_RATIO = 0.25
     
     N_HANDS_FOR_EVAL = 50000
-    N_HANDS_FOR_OPTIMIZATION = 5000
-    N_ITERS_GENERATE_NEW_HANDS = 5
-    N_ITERS_BETWEEN_EVALS = 5
+    N_HANDS_FOR_OPTIMIZATION = 2000
+    
+    N_ITERS_GENERATE_NEW_HANDS = N_POPULATIONS * 1
+    N_ITERS_BETWEEN_EVALS = 10
+    OPTIMIZATION_ITERS_PER_POPULATION = 2
+    # ..................................................................
     
     
+    # Create folder to save the results
+    time = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+    pathResults = os.path.join(PATH_SAVE_RESULTS,time)
+    pathEvalResults = os.path.join(pathResults, 'evaluation')
+    pathPopulations = os.path.join(pathResults, 'populations')
+    if not os.path.exists(pathResults):
+        os.makedirs(pathResults)
+    if not os.path.exists(pathEvalResults):
+        os.makedirs(pathEvalResults)
+    if not os.path.exists(pathPopulations):
+        os.makedirs(pathPopulations)
+
+    shutil.copy('test_genetic_selfplay.py', os.path.join(pathResults, 'test_genetic_selfplay.py'))
     
     pool = mp.Pool(N_CORES)
     
@@ -425,14 +442,10 @@ class CallAgent():
 # %%
     
 
-
-#    populationFitness, bestFitness = [], []
-
-    # %%
-
     c = -1
     while(1):
         c += 1
+        print(c)
         
         
         if(c % N_ITERS_GENERATE_NEW_HANDS == 0):
@@ -447,10 +460,15 @@ class CallAgent():
             
             evalGameStates, evalStacks = initRandomGames(N_HANDS_FOR_EVAL)
             
+            populationWinAmounts = []
             for ii, pop in enumerate(populations):
                 finalGameStates = playGames(copy.deepcopy(evalGameStates), (pop.bestAgent, CallAgent()), WIN_LEN)
                 agentWinAmounts = np.mean(getWinAmountsForAgents([finalGameStates], evalStacks, 0))
-                print(str(ii) + ' population: ' + str(agentWinAmounts))
+                populationWinAmounts.append(agentWinAmounts*100)
+                
+                print(str(ii) + ' population: ' + str(agentWinAmounts*100))
+                
+            np.save(os.path.join(pathEvalResults ,str(c)+'_win_amounts'), np.array(populationWinAmounts))
             
             print('.......................\n')
 
@@ -460,7 +478,8 @@ class CallAgent():
         popIdx = np.random.randint(N_POPULATIONS)
         
         curPopulation = populations[popIdx]
-        opponentPopulations = populations[np.delete(np.arange(len(populations)), popIdx)]
+#        opponentPopulations = populations[np.delete(np.arange(len(populations)), popIdx)]
+        opponentPopulations = populations[np.random.choice(len(populations), size=2, replace=0)]
         opponentAgents = np.array([pop.bestAgent for pop in opponentPopulations])
         
         for optIter in range(OPTIMIZATION_ITERS_PER_POPULATION):
@@ -482,7 +501,7 @@ class CallAgent():
         
 #            populationFitness.append(np.mean(modelFitness))
 #            bestFitness.append(np.max(modelFitness))        
-            print(optIter, np.mean(agentFitness), np.max(agentFitness))
+            print(optIter, np.mean(agentFitness)*100, np.max(agentFitness)*100)
     
             # If last round skip mutation because we want to know which one is the best model in the current
             # population
@@ -508,6 +527,7 @@ class CallAgent():
             
             curPopulation.agents = np.array(nextGeneration)
                 
+        print('')
         
     #    n = 0
     #    plt.plot(populationFitness[n:])
