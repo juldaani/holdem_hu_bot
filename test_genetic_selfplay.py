@@ -400,7 +400,7 @@ class CallAgent():
     PATH_SAVE_RESULTS = '/home/juho/dev_folder/asdf/data/'
     
     #SEED = 123
-    N_CORES = 6
+    N_CORES = 2
     WIN_LEN = 2
     
     N_POPULATIONS = 5
@@ -460,6 +460,10 @@ class CallAgent():
             
             evalGameStates, evalStacks = initRandomGames(N_HANDS_FOR_EVAL)
             
+            popIdxToEval = np.column_stack((np.triu_indices(len(populations), k=1)))
+            
+            
+            
             populationWinAmounts = []
             for ii, pop in enumerate(populations):
                 finalGameStates = playGames(copy.deepcopy(evalGameStates), (pop.bestAgent, CallAgent()), WIN_LEN)
@@ -507,9 +511,6 @@ class CallAgent():
             # population
             if(optIter == OPTIMIZATION_ITERS_PER_POPULATION-1):
                 break
-        
-            # Save data
-            
         
             # Put the best individual without mutation to the next generation
             nextGeneration = []
