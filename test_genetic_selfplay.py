@@ -19,7 +19,7 @@ import torch
 torch.set_num_threads(1)
 import torch.nn as nn
 
-sys.path.append('/home/juho/dev_folder/asdf/')
+#sys.path.append('/home/juho/dev_folder/asdf/')
 from holdem_hu_bot.common_stuff import suitsOnehotLut, ranksOnehotLut
 from texas_hu_engine.wrappers import executeActions, createActionsToExecute, GameState
 from texas_hu_engine.engine_numba import initGame
@@ -209,22 +209,29 @@ def playGames(gameStates, agents, WIN_LEN):
 
     
 def playGamesWrapper(gameStates, agents, WIN_LEN, idx):
+    torch.set_num_threads(1)
     return (playGames(gameStates, agents, WIN_LEN), idx)
 
 
-def playGamesParallel(pool, initGameStates, agentsPopulation, agentOpponent, nCores, winLen):
-    result_objects = [pool.apply_async(playGamesWrapper, args=(copy.deepcopy(initGameStates), 
-                                                               (copy.deepcopy(agentsPopulation[i]), 
-                                                                copy.deepcopy(agentOpponent)), winLen, i)) 
-                                                            for i in range(len(agentsPopulation))]
+def playGamesParallel(pool, gameStates, initStacks, agents1, agents2, winLen):
+    result_objects = [pool.apply_async(playGamesWrapper, args=(copy.deepcopy(gameStates), 
+                                                               (copy.deepcopy(agents1[i]), 
+                                                                copy.deepcopy(agents2[i])), winLen, i)) 
+                                                            for i in range(len(agents1))]
     results = [r.get() for r in result_objects]
 
     # Sort results because it is not quaranteed that apply_async returns them in correct order
     orderNum = np.array([res[1] for res in results])
     sorter = np.argsort(orderNum)
     finalGameStates = np.array([res[0] for res in results])
+    finalGameStates = finalGameStates[sorter]
+    
+    assert len(finalGameStates) == len(agents1)
+    
+    winAmounts = getWinAmountsForAgents(finalGameStates, initStacks, 0)
+    meanWinAmounts = [np.mean(amounts) for amounts in winAmounts]
 
-    return finalGameStates[sorter]
+    return finalGameStates, meanWinAmounts, winAmounts
 
 
 def initRandomGames(nGames, seed=-1):
@@ -281,6 +288,32 @@ def initGamesWrapper(nGames, seed=-1):
     return boardsArr, playersArr, controlVariablesArr, availableActionsArr, initStacksArr
     
 
+def evaluatePopulations(populations, gameStates, initStacks, WIN_LEN, pool):
+    popIdxEval = np.column_stack((np.triu_indices(len(populations), k=1)))
+    agents1 = [populations[idx].bestAgent for idx in popIdxEval[:,0]]
+    agents2 = [populations[idx].bestAgent for idx in popIdxEval[:,1]]
+    finalGameStates, meanWinAmounts, winAmounts = playGamesParallel(pool, gameStates, initStacks, 
+                                                                    agents1, agents2, WIN_LEN)
+    meanWinAmounts = np.concatenate((meanWinAmounts,np.array(meanWinAmounts)*-1))
+    popIdxEval = np.row_stack((popIdxEval, np.roll(popIdxEval, shift=1, axis=1)))
+
+    return finalGameStates, meanWinAmounts, winAmounts, popIdxEval
+
+
+def ftnessForAgentsInPopulation(population, opponentPopulations, gameStates, initStacks, WIN_LEN, 
+                                pool):
+    winAmounts = []
+    
+    for opponentPop in opponentPopulations:
+        agentsCurPopulation = population.agents
+        agentsOpponent = [opponentPop.bestAgent for _ in range(len(agentsCurPopulation))]
+        _, _, tmpWinAmounts = playGamesParallel(pool, gameStates, initStacks, agentsCurPopulation, 
+                                                agentsOpponent, WIN_LEN)
+        winAmounts.append(tmpWinAmounts)
+        
+    return np.mean(np.column_stack((winAmounts)),1)
+
+
 class AiModel(nn.Module):
     def __init__(self, winLen):
         super(AiModel, self).__init__()
@@ -289,9 +322,9 @@ class AiModel(nn.Module):
             nn.Linear(7*(winLen+17), 250), nn.ReLU(),
             nn.Linear(250, 250), nn.ReLU(),
             nn.Linear(250, 250), nn.ReLU(),
-            nn.Linear(250, 250), nn.ReLU(),
-            nn.Linear(250, 250), nn.ReLU(),
-            nn.Linear(250, 250), nn.ReLU(),
+            #nn.Linear(250, 250), nn.ReLU(),
+            #nn.Linear(250, 250), nn.ReLU(),
+            #nn.Linear(250, 250), nn.ReLU(),
             nn.Linear(250, 10))
         
         # Get references to weights and biases. These are used when mutating the model.
@@ -378,6 +411,18 @@ class AiAgent():
         return agentActions, maskAgent, features
 
 
+class FoldAgent():
+    def __init__(self):
+        pass
+    
+    def getActions(self, gameStates, idxAgent, features, winLen):
+        maskAgent, _, _, _, = getMasks(gameStates, idxAgent)
+        actionsAgent = np.zeros((np.sum(maskAgent),2))-1
+        actionsAgent[:,0] = 1
+
+        return actionsAgent, maskAgent, features
+
+
 class CallAgent():
     def __init__(self):
         pass
@@ -389,6 +434,31 @@ class CallAgent():
 
         return actionsAgent, maskAgent, features
 
+    
+class MinRaiseAgent():
+    def __init__(self):
+        pass
+    
+    def getActions(self, gameStates, idxAgent, features, winLen):
+        maskAgent, _, _, _, = getMasks(gameStates, idxAgent)
+        availableActions = gameStates.availableActions[maskAgent]
+        actionsAgent = np.zeros((np.sum(maskAgent),2))-1
+        actionsAgent[:,1] = np.max(availableActions[:,:2], 1)   # Pick min raise if available, otherwise call
+
+        return actionsAgent, maskAgent, features
+
+
+class AllInAgent():
+    def __init__(self):
+        pass
+    
+    def getActions(self, gameStates, idxAgent, features, winLen):
+        maskAgent, _, _, _, = getMasks(gameStates, idxAgent)
+        availableActions = gameStates.availableActions[maskAgent]
+        actionsAgent = np.zeros((np.sum(maskAgent),2))-1
+        actionsAgent[:,1] = np.max(availableActions[:,[0,-1]], 1)   # Pick all-in if available, otherwise call
+
+        return actionsAgent, maskAgent, features
 
     
 #if __name__ == "__main__":
@@ -397,24 +467,30 @@ class CallAgent():
     
     # Parameters        
     # ..................................................................
-    PATH_SAVE_RESULTS = '/home/juho/dev_folder/asdf/data/'
+    PATH_SAVE_RESULTS = '/home/juho/dev_folder/data/poker_ai'
     
     #SEED = 123
-    N_CORES = 2
+    N_CORES = 20
     WIN_LEN = 2
     
-    N_POPULATIONS = 5
+    N_POPULATIONS = 10
     POPULATION_SIZE = 100
     RATIO_BEST_INDIVIDUALS = 0.10
     MUTATION_SIGMA = 1.0e-2
     MUTATION_RATIO = 0.25
     
-    N_HANDS_FOR_EVAL = 500
-    N_HANDS_FOR_OPTIMIZATION = 200
+    N_HANDS_FOR_EVAL = 5000
+    N_HANDS_FOR_OPTIMIZATION = 2500
     
     N_ITERS_GENERATE_NEW_HANDS = N_POPULATIONS * 1
     N_ITERS_BETWEEN_EVALS = 10
-    OPTIMIZATION_ITERS_PER_POPULATION = 2
+    OPTIMIZATION_ITERS_PER_POPULATION = 3
+
+    # Dummy opponents serve as absolute reference for evaluation of populations
+    DUMMY_OPPONENTS = {'fold_agent': FoldAgent(),
+                       'call_agent': CallAgent(),
+                       'min_raise_agent': MinRaiseAgent(),
+                       'all_in_agent': AllInAgent()}
     # ..................................................................
     
     
@@ -437,108 +513,96 @@ class CallAgent():
     populations = np.array([Population(POPULATION_SIZE, WIN_LEN) for _ in range(N_POPULATIONS)])
     
 
-
-        
-# %%
+    # %%
     
-
     c = -1
+    
     while(1):
         c += 1
         print(c)
         
-        
+        # Create new games
         if(c % N_ITERS_GENERATE_NEW_HANDS == 0):
             initGameStates, initStacks = initRandomGames(N_HANDS_FOR_OPTIMIZATION)
-        
-        
-        
+    
         # Evaluate populations
         if(c % N_ITERS_BETWEEN_EVALS == 0):
             print('\n.......................')
             print('Win amounts:')
             
+            # Create new fresh games for evaluation
             evalGameStates, evalStacks = initRandomGames(N_HANDS_FOR_EVAL)
             
-            popIdxEval = np.column_stack((np.triu_indices(len(populations), k=1)))
-            popWinAmountsEval = []
-            for popIdx1, popIdx2 in popIdxEval:
-                print(popIdx1,popIdx2)
-                
-                pop1, pop2 = populations[popIdx1], populations[popIdx2]
-                finalGameStates = playGames(copy.deepcopy(evalGameStates), (pop1.bestAgent, pop2.bestAgent),
-                                            WIN_LEN)
-                agentWinAmounts = np.mean(getWinAmountsForAgents([finalGameStates], evalStacks, 0))
-                popWinAmountsEval.append(agentWinAmounts)
+            # Evaluate populations against each other
+            _, meanWinAmountsEval, _, popIdxEval = evaluatePopulations(populations, evalGameStates, evalStacks, 
+                                                                       WIN_LEN, pool)
             
-            popWinAmountsEval = np.concatenate((popWinAmountsEval,np.array(popWinAmountsEval)*-1))
-            popIdxEval = np.row_stack((popIdxEval,np.column_stack((popIdxEval[:,-1],popIdxEval[:,-0]))))
+            
+            
+            
+            # Evaluate populations against dummy opponents
+            gameStates = evalGameStates
+            initStacks = evalStacks
+            
+            for name, opponent in zip(DUMMY_OPPONENTS.keys(), DUMMY_OPPONENTS.values()):
+                agents = [pop.bestAgent for pop in populations]
+                opponentAgents = [opponent for _ in agents]
+                
+                finalGameStates, meanWinAmounts, winAmounts = playGamesParallel(pool, gameStates, initStacks, 
+                                                                                agents, opponentAgents, WIN_LEN)
+                
+                
+                
+                
+                
+                
+            # populationWinAmounts = []
+            # for ii, pop in enumerate(populations):
+            #     finalGameStates = playGames(copy.deepcopy(evalGameStates), (pop.bestAgent, CallAgent()), WIN_LEN)
+            #     agentWinAmounts = np.mean(getWinAmountsForAgents([finalGameStates], evalStacks, 0))
+            #     populationWinAmounts.append(agentWinAmounts*100)
+                
+            #     print(str(ii) + ' population: ' + str(agentWinAmounts*100))
+                
+            # np.save(os.path.join(pathEvalResults ,str(c)+'_win_amounts'), np.array(populationWinAmounts))
 
-
-#            populationWinAmounts = []
-#            for ii, pop in enumerate(populations):
-#                finalGameStates = playGames(copy.deepcopy(evalGameStates), (pop.bestAgent, CallAgent()), WIN_LEN)
-#                agentWinAmounts = np.mean(getWinAmountsForAgents([finalGameStates], evalStacks, 0))
-#                populationWinAmounts.append(agentWinAmounts*100)
-#                
-#                print(str(ii) + ' population: ' + str(agentWinAmounts*100))
-#                
-#            np.save(os.path.join(pathEvalResults ,str(c)+'_win_amounts'), np.array(populationWinAmounts))
             
             print('.......................\n')
 
-            
         
-        
-        
-#        popIdx = np.random.randint(N_POPULATIONS)
-#        curPopulation = populations[popIdx]
-#        opponentPopulations = populations[np.random.choice(len(populations), size=2, replace=0)]
-#        opponentAgents = np.array([pop.bestAgent for pop in opponentPopulations])
-
-        samplingProbs = (popWinAmountsEval*-1) + np.abs(np.min(popWinAmountsEval*-1))
+        samplingProbs = (meanWinAmountsEval*-1) + np.abs(np.min(meanWinAmountsEval*-1))
         samplingProbs /= np.sum(samplingProbs)
         idx = np.random.choice(np.arange(len(popIdxEval)), size=1, p=samplingProbs)[0]
         curPopIdx, opponentPopIdx = popIdxEval[idx,0], popIdxEval[idx,1]
-        curPopulation, opponentPopulations = populations[curPopIdx], [populations[opponentPopIdx]]
+        curPopulation, opponentPopulation = populations[curPopIdx], populations[opponentPopIdx]
                 
-        
         for optIter in range(OPTIMIZATION_ITERS_PER_POPULATION):
-            
-            # Play games
-            winAmounts = []
-            for opponentPop in opponentPopulations:
-                finalGameStates = playGamesParallel(pool, initGameStates, curPopulation.agents, 
-                                                    opponentPop.bestAgent, N_CORES, WIN_LEN)
-                assert len(finalGameStates) == POPULATION_SIZE
-                winAmounts.append(getWinAmountsForAgents(finalGameStates, initStacks, 0))
-            winAmounts = np.column_stack((winAmounts))
-            
-            agentFitness = np.mean(winAmounts,1)
-            sorter = np.argsort(agentFitness)
-            bestIdx = sorter[-int(len(sorter)*RATIO_BEST_INDIVIDUALS):]
-            
-            curPopulation.bestAgent = curPopulation.agents[bestIdx[-1]]
-        
-#            populationFitness.append(np.mean(modelFitness))
-#            bestFitness.append(np.max(modelFitness))        
+            # Get fitness for agents in the population
+            agentFitness = ftnessForAgentsInPopulation(curPopulation, [opponentPopulation], initGameStates, 
+                                                       initStacks, WIN_LEN, pool)
+
+            # Update the best agent in current population
+            curPopulation.bestAgent = curPopulation.agents[np.argmax(agentFitness)]
+
             print(optIter, np.mean(agentFitness)*100, np.max(agentFitness)*100)
     
-            # If last round skip mutation because we want to know which one is the best model in the current
+            # If last round skip mutation because we want to know which one is the best agent in the current
             # population
             if(optIter == OPTIMIZATION_ITERS_PER_POPULATION-1):
                 break
         
-            # Put the best individual without mutation to the next generation
+            # Put n best agents without mutation to the next generation
             nextGeneration = []
-            nextGeneration = [curPopulation.agents[idx] for idx in bestIdx[-3:]]
+            sorter = np.argsort(agentFitness)
+            bestIdx = sorter[-int(len(sorter)*RATIO_BEST_INDIVIDUALS):]
+            nextGeneration = [curPopulation.agents[idx] for idx in bestIdx]
             
             # Mutate
             for i in range(POPULATION_SIZE-len(nextGeneration)):
                 idx = bestIdx[np.random.randint(len(bestIdx))]
                 
                 agent = copy.deepcopy(curPopulation.agents[idx])
-#                model.mutateAllLayers(MUTATION_SIGMA, ratio=MUTATION_RATIO)
+                # model.mutateAllLayers(MUTATION_SIGMA, ratio=MUTATION_RATIO)
                 agent.model.mutateOneLayer(MUTATION_SIGMA, ratio=MUTATION_RATIO)
                 
                 nextGeneration.append(agent)
@@ -547,9 +611,9 @@ class CallAgent():
                 
         print('')
         
-    #    n = 0
-    #    plt.plot(populationFitness[n:])
-    #    plt.plot(bestFitness[n:])
+        # n = 0
+        # plt.plot(populationFitness[n:])
+        # plt.plot(bestFitness[n:])
             
     
     
