@@ -300,6 +300,20 @@ def evaluatePopulations(populations, gameStates, initStacks, WIN_LEN, pool):
     return finalGameStates, meanWinAmounts, winAmounts, popIdxEval
 
 
+def evaluateDummyOpponents(populations, gameStates, initStacks, DUMMY_OPPONENTS, WIN_LEN, pool):  
+    res = {}
+    for key, opponent in zip(DUMMY_OPPONENTS.keys(), DUMMY_OPPONENTS.values()):
+        agents = [pop.bestAgent for pop in populations]
+        opponentAgents = [opponent for _ in agents]
+        
+        finalGameStates, meanWinAmounts, winAmounts = playGamesParallel(pool, gameStates, initStacks, 
+                                                                        agents, opponentAgents, WIN_LEN)
+
+        res[key] = meanWinAmounts
+        
+    return res
+
+
 def ftnessForAgentsInPopulation(population, opponentPopulations, gameStates, initStacks, WIN_LEN, 
                                 pool):
     winAmounts = []
@@ -512,8 +526,8 @@ class AllInAgent():
     
     populations = np.array([Population(POPULATION_SIZE, WIN_LEN) for _ in range(N_POPULATIONS)])
     
-
-    # %%
+    
+# %%
     
     c = -1
     
@@ -534,43 +548,23 @@ class AllInAgent():
             evalGameStates, evalStacks = initRandomGames(N_HANDS_FOR_EVAL)
             
             # Evaluate populations against each other
-            _, meanWinAmountsEval, _, popIdxEval = evaluatePopulations(populations, evalGameStates, evalStacks, 
-                                                                       WIN_LEN, pool)
-            
-            
-            
+            _, popVsPopEvalRes, _, popIdxEval = evaluatePopulations(populations, evalGameStates, evalStacks, 
+                                                                    WIN_LEN, pool)
             
             # Evaluate populations against dummy opponents
-            gameStates = evalGameStates
-            initStacks = evalStacks
+            dummyEvalRes = evaluateDummyOpponents(populations, evalGameStates, evalStacks, DUMMY_OPPONENTS, 
+                                                  WIN_LEN, pool)
             
-            for name, opponent in zip(DUMMY_OPPONENTS.keys(), DUMMY_OPPONENTS.values()):
-                agents = [pop.bestAgent for pop in populations]
-                opponentAgents = [opponent for _ in agents]
-                
-                finalGameStates, meanWinAmounts, winAmounts = playGamesParallel(pool, gameStates, initStacks, 
-                                                                                agents, opponentAgents, WIN_LEN)
-                
-                
-                
-                
-                
-                
-            # populationWinAmounts = []
-            # for ii, pop in enumerate(populations):
-            #     finalGameStates = playGames(copy.deepcopy(evalGameStates), (pop.bestAgent, CallAgent()), WIN_LEN)
-            #     agentWinAmounts = np.mean(getWinAmountsForAgents([finalGameStates], evalStacks, 0))
-            #     populationWinAmounts.append(agentWinAmounts*100)
-                
-            #     print(str(ii) + ' population: ' + str(agentWinAmounts*100))
-                
-            # np.save(os.path.join(pathEvalResults ,str(c)+'_win_amounts'), np.array(populationWinAmounts))
-
+            # Save evaluation results
+            np.save(os.path.join(pathEvalResults ,str(c)+'_eval_dummy_opponents'), dummyEvalRes)
+            np.save(os.path.join(pathEvalResults ,str(c)+'_eval_population_vs_population'), 
+                    {'population_index':popIdxEval, 'res':popVsPopEvalRes})
             
             print('.......................\n')
 
+
         
-        samplingProbs = (meanWinAmountsEval*-1) + np.abs(np.min(meanWinAmountsEval*-1))
+        samplingProbs = (popVsPopEvalRes*-1) + np.abs(np.min(popVsPopEvalRes*-1))
         samplingProbs /= np.sum(samplingProbs)
         idx = np.random.choice(np.arange(len(popIdxEval)), size=1, p=samplingProbs)[0]
         curPopIdx, opponentPopIdx = popIdxEval[idx,0], popIdxEval[idx,1]
