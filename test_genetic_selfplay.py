@@ -328,6 +328,30 @@ def ftnessForAgentsInPopulation(population, opponentPopulations, gameStates, ini
     return np.mean(np.column_stack((winAmounts)),1)
 
 
+def saveCheckpoint(populations, params, path, iteration):
+    dictToSave = {'params':params,
+                  'populations': [{'models':[agent.model.state_dict() for agent in pop.agents],
+                                   'best_model':pop.bestAgent.model.state_dict()} 
+                                  for pop in populations]
+                  }
+    
+    torch.save(dictToSave, os.path.join(path, str(iteration)+'_models_for_populations.tar'))
+
+
+def loadCheckpoint(path):
+    checkpoint = torch.load(path)
+    params = checkpoint['params']
+    populations = np.array([Population(params['POPULATION_SIZE'], params['WIN_LEN']) 
+                            for _ in range(params['N_POPULATIONS'])])
+    
+    for pop, popCheckpoint in zip(populations,checkpoint['populations']):
+        for modelCheckpoint, agent in zip(popCheckpoint['models'], pop.agents):
+            agent.model.load_state_dict(modelCheckpoint)
+        pop.bestAgent.model.load_state_dict(popCheckpoint['best_model'])
+    
+    return populations, params
+
+
 class AiModel(nn.Module):
     def __init__(self, winLen):
         super(AiModel, self).__init__()
@@ -474,91 +498,137 @@ class AllInAgent():
 
         return actionsAgent, maskAgent, features
 
+
     
+
 #if __name__ == "__main__":
     
-    # %%
+# %%
+        
     
     # Parameters        
-    # ..................................................................
+    # ........................................................................
     PATH_SAVE_RESULTS = '/home/juho/dev_folder/data/poker_ai'
     
-    #SEED = 123
-    N_CORES = 20
-    WIN_LEN = 2
-    
-    N_POPULATIONS = 10
-    POPULATION_SIZE = 100
-    RATIO_BEST_INDIVIDUALS = 0.10
-    MUTATION_SIGMA = 1.0e-2
-    MUTATION_RATIO = 0.25
-    
-    N_HANDS_FOR_EVAL = 5000
-    N_HANDS_FOR_OPTIMIZATION = 2500
-    
-    N_ITERS_GENERATE_NEW_HANDS = N_POPULATIONS * 1
-    N_ITERS_BETWEEN_EVALS = 10
-    OPTIMIZATION_ITERS_PER_POPULATION = 3
+    PATH_LOAD_CHECKPOINT = '' # Leave empty if fresh start
+    CHECKPOINT_ITER = -1    # Use -1 to load the most recent checkpoint
 
+    N_CORES = 20
+    
+    params = {
+        'WIN_LEN': 2,
+        
+        'N_POPULATIONS': 10,
+        'POPULATION_SIZE': 100,
+        'RATIO_BEST_INDIVIDUALS': 0.10,
+        'MUTATION_SIGMA': 1.0e-2,
+        'MUTATION_RATIO': 0.25,
+        
+        'N_HANDS_FOR_EVAL': 5000,
+        'N_HANDS_FOR_OPTIMIZATION': 500,
+        
+        'N_ITERS_GENERATE_NEW_HANDS': 10,
+        'N_ITERS_BETWEEN_EVALS': 10,
+        'OPTIMIZATION_ITERS_PER_POPULATION': 3
+    }
+    # ........................................................................
+    
+
+    # Continue training from checkpoint
+    if(len(PATH_LOAD_CHECKPOINT) > 0):
+        pathResults = PATH_LOAD_CHECKPOINT
+        pathEvalResults = os.path.join(pathResults, 'evaluation')
+        pathPopulations = os.path.join(pathResults, 'populations')
+        
+        # List checkpoint files
+        checkpointsFiles = np.array([f for f in os.listdir(pathPopulations)])
+        iters = np.array([int(f.split('_')[0]) for f in checkpointsFiles])
+        iters = iters[np.argsort(iters)]
+        checkpointsFiles = checkpointsFiles[np.argsort(iters)]
+        
+        # Load latest checkpoint
+        iteration = iters[CHECKPOINT_ITER]
+        checkpointFile = checkpointsFiles[CHECKPOINT_ITER]
+        
+        # Load particular checkpoint
+        if(CHECKPOINT_ITER != -1):
+            idx = np.nonzero(CHECKPOINT_ITER == iters)[0]
+            assert len(idx) == 1
+            checkpointFile = checkpointsFiles[idx[0]]
+            iteration = CHECKPOINT_ITER
+            
+        checkpointPath = os.path.join(pathPopulations, checkpointFile)
+        populations, params = loadCheckpoint(checkpointPath)
+        
+        print('\n........................................................')
+        print('Training started from checkpoint: ' + checkpointPath)
+        print('........................................................')
+    
+    
+    # Fresh start for training
+    else:
+        # Create folder to save the results
+        time = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+        pathResults = os.path.join(PATH_SAVE_RESULTS,time)
+        pathEvalResults = os.path.join(pathResults, 'evaluation')
+        pathPopulations = os.path.join(pathResults, 'populations')
+        if not os.path.exists(pathResults):
+            os.makedirs(pathResults)
+        if not os.path.exists(pathEvalResults):
+            os.makedirs(pathEvalResults)
+        if not os.path.exists(pathPopulations):
+            os.makedirs(pathPopulations)
+    
+        shutil.copy('test_genetic_selfplay.py', os.path.join(pathResults, 'test_genetic_selfplay.py'))
+        
+        populations = np.array([Population(params['POPULATION_SIZE'], params['WIN_LEN']) 
+                                for _ in range(params['N_POPULATIONS'])])
+
+        iteration = 0
+    
+    
     # Dummy opponents serve as absolute reference for evaluation of populations
     DUMMY_OPPONENTS = {'fold_agent': FoldAgent(),
                        'call_agent': CallAgent(),
                        'min_raise_agent': MinRaiseAgent(),
                        'all_in_agent': AllInAgent()}
-    # ..................................................................
-    
-    
-    # Create folder to save the results
-    time = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-    pathResults = os.path.join(PATH_SAVE_RESULTS,time)
-    pathEvalResults = os.path.join(pathResults, 'evaluation')
-    pathPopulations = os.path.join(pathResults, 'populations')
-    if not os.path.exists(pathResults):
-        os.makedirs(pathResults)
-    if not os.path.exists(pathEvalResults):
-        os.makedirs(pathEvalResults)
-    if not os.path.exists(pathPopulations):
-        os.makedirs(pathPopulations)
-
-    shutil.copy('test_genetic_selfplay.py', os.path.join(pathResults, 'test_genetic_selfplay.py'))
     
     pool = mp.Pool(N_CORES)
     
-    populations = np.array([Population(POPULATION_SIZE, WIN_LEN) for _ in range(N_POPULATIONS)])
-    
-    
+
+
 # %%
     
-    c = -1
-    
     while(1):
-        c += 1
-        print(c)
+        print(iteration)
         
         # Create new games
-        if(c % N_ITERS_GENERATE_NEW_HANDS == 0):
-            initGameStates, initStacks = initRandomGames(N_HANDS_FOR_OPTIMIZATION)
+        if(iteration % params['N_ITERS_GENERATE_NEW_HANDS'] == 0):
+            initGameStates, initStacks = initRandomGames(params['N_HANDS_FOR_OPTIMIZATION'])
     
         # Evaluate populations
-        if(c % N_ITERS_BETWEEN_EVALS == 0):
+        if(iteration % params['N_ITERS_BETWEEN_EVALS'] == 0):
             print('\n.......................')
             print('Win amounts:')
             
             # Create new fresh games for evaluation
-            evalGameStates, evalStacks = initRandomGames(N_HANDS_FOR_EVAL)
+            evalGameStates, evalStacks = initRandomGames(params['N_HANDS_FOR_EVAL'])
             
             # Evaluate populations against each other
             _, popVsPopEvalRes, _, popIdxEval = evaluatePopulations(populations, evalGameStates, evalStacks, 
-                                                                    WIN_LEN, pool)
+                                                                    params['WIN_LEN'], pool)
             
             # Evaluate populations against dummy opponents
             dummyEvalRes = evaluateDummyOpponents(populations, evalGameStates, evalStacks, DUMMY_OPPONENTS, 
-                                                  WIN_LEN, pool)
+                                                  params['WIN_LEN'], pool)
             
             # Save evaluation results
-            np.save(os.path.join(pathEvalResults ,str(c)+'_eval_dummy_opponents'), dummyEvalRes)
-            np.save(os.path.join(pathEvalResults ,str(c)+'_eval_population_vs_population'), 
+            np.save(os.path.join(pathEvalResults ,str(iteration)+'_eval_dummy_opponents'), dummyEvalRes)
+            np.save(os.path.join(pathEvalResults ,str(iteration)+'_eval_population_vs_population'), 
                     {'population_index':popIdxEval, 'res':popVsPopEvalRes})
+            
+            # Save models
+            saveCheckpoint(populations, params, pathPopulations, iteration)
             
             print('.......................\n')
 
@@ -570,10 +640,10 @@ class AllInAgent():
         curPopIdx, opponentPopIdx = popIdxEval[idx,0], popIdxEval[idx,1]
         curPopulation, opponentPopulation = populations[curPopIdx], populations[opponentPopIdx]
                 
-        for optIter in range(OPTIMIZATION_ITERS_PER_POPULATION):
+        for optIter in range(params['OPTIMIZATION_ITERS_PER_POPULATION']):
             # Get fitness for agents in the population
             agentFitness = ftnessForAgentsInPopulation(curPopulation, [opponentPopulation], initGameStates, 
-                                                       initStacks, WIN_LEN, pool)
+                                                       initStacks, params['WIN_LEN'], pool)
 
             # Update the best agent in current population
             curPopulation.bestAgent = curPopulation.agents[np.argmax(agentFitness)]
@@ -582,28 +652,31 @@ class AllInAgent():
     
             # If last round skip mutation because we want to know which one is the best agent in the current
             # population
-            if(optIter == OPTIMIZATION_ITERS_PER_POPULATION-1):
+            if(optIter == params['OPTIMIZATION_ITERS_PER_POPULATION']-1):
                 break
         
             # Put n best agents without mutation to the next generation
             nextGeneration = []
             sorter = np.argsort(agentFitness)
-            bestIdx = sorter[-int(len(sorter)*RATIO_BEST_INDIVIDUALS):]
+            bestIdx = sorter[-int(len(sorter)*params['RATIO_BEST_INDIVIDUALS']):]
             nextGeneration = [curPopulation.agents[idx] for idx in bestIdx]
             
             # Mutate
-            for i in range(POPULATION_SIZE-len(nextGeneration)):
+            for i in range(params['POPULATION_SIZE']-len(nextGeneration)):
                 idx = bestIdx[np.random.randint(len(bestIdx))]
                 
                 agent = copy.deepcopy(curPopulation.agents[idx])
                 # model.mutateAllLayers(MUTATION_SIGMA, ratio=MUTATION_RATIO)
-                agent.model.mutateOneLayer(MUTATION_SIGMA, ratio=MUTATION_RATIO)
+                agent.model.mutateOneLayer(params['MUTATION_SIGMA'], ratio=params['MUTATION_RATIO'])
                 
                 nextGeneration.append(agent)
             
             curPopulation.agents = np.array(nextGeneration)
                 
+            
+            
         print('')
+        iteration += 1
         
         # n = 0
         # plt.plot(populationFitness[n:])
