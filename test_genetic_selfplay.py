@@ -175,6 +175,15 @@ def optimizeWinAmounts(modelWinAmounts):
     return modelWinAmounts
  
     
+def totalWinRatesForPopulations(popVsPopEvalRes, popIdxEval):
+    nPopulations = len(np.unique(popIdxEval[:,0]))
+    sorter = np.argsort(popIdxEval[:,0])
+    res = popVsPopEvalRes[sorter].reshape((-1,nPopulations-1))   # Rows contain results
+        # for each population
+    
+    return np.sum(res,1)
+
+    
 def playGames(gameStates, agents, WIN_LEN):
     features = np.zeros((len(gameStates.boards), 7, WIN_LEN+17))
     actionsToExecute = np.zeros((len(gameStates.boards),2), dtype=np.int64) - 999
@@ -300,9 +309,9 @@ def evaluatePopulations(populations, gameStates, initStacks, WIN_LEN, pool):
     return finalGameStates, meanWinAmounts, winAmounts, popIdxEval
 
 
-def evaluateDummyOpponents(populations, gameStates, initStacks, DUMMY_OPPONENTS, WIN_LEN, pool):  
+def evaluateAgainstOpponents(populations, gameStates, initStacks, opponents, WIN_LEN, pool):  
     res = {}
-    for key, opponent in zip(DUMMY_OPPONENTS.keys(), DUMMY_OPPONENTS.values()):
+    for key, opponent in zip(opponents.keys(), opponents.values()):
         agents = [pop.bestAgent for pop in populations]
         opponentAgents = [opponent for _ in agents]
         
@@ -328,11 +337,13 @@ def ftnessForAgentsInPopulation(population, opponentPopulations, gameStates, ini
     return np.mean(np.column_stack((winAmounts)),1)
 
 
-def saveCheckpoint(populations, params, path, iteration):
-    dictToSave = {'params':params,
+def saveCheckpoint(populations, pastBestAgents, params, path, iteration):
+    dictToSave = {'params': params,
                   'populations': [{'models':[agent.model.state_dict() for agent in pop.agents],
                                    'best_model':pop.bestAgent.model.state_dict()} 
-                                  for pop in populations]
+                                  for pop in populations],
+                  'past_best_agents': {key:pastBestAgents[key].model.state_dict() 
+                                       for key in pastBestAgents.keys()}
                   }
     
     torch.save(dictToSave, os.path.join(path, str(iteration)+'_models_for_populations.tar'))
@@ -344,12 +355,23 @@ def loadCheckpoint(path):
     populations = np.array([Population(params['POPULATION_SIZE'], params['WIN_LEN']) 
                             for _ in range(params['N_POPULATIONS'])])
     
+    # Load models for populations
     for pop, popCheckpoint in zip(populations,checkpoint['populations']):
         for modelCheckpoint, agent in zip(popCheckpoint['models'], pop.agents):
             agent.model.load_state_dict(modelCheckpoint)
         pop.bestAgent.model.load_state_dict(popCheckpoint['best_model'])
     
-    return populations, params
+    populations[0].agents[4].model
+    
+    # Load models for past best agents
+    pastBestAgents = {}
+    for key in checkpoint['past_best_agents'].keys():
+        tmpModel = AiModel(params['WIN_LEN'])
+        tmpModel.load_state_dict(checkpoint['past_best_agents'][key])
+        pastBestAgents[key] = AiAgent(tmpModel)
+    checkpoint['past_best_agents'].keys()
+    
+    return populations, pastBestAgents, params
 
 
 class AiModel(nn.Module):
@@ -524,12 +546,13 @@ class AllInAgent():
         'MUTATION_SIGMA': 1.0e-2,
         'MUTATION_RATIO': 0.25,
         
-        'N_HANDS_FOR_EVAL': 5000,
-        'N_HANDS_FOR_OPTIMIZATION': 500,
+        'N_HANDS_FOR_EVAL': 50000,
+        'N_HANDS_FOR_OPTIMIZATION': 10000,
         
         'N_ITERS_GENERATE_NEW_HANDS': 10,
-        'N_ITERS_BETWEEN_EVALS': 10,
-        'OPTIMIZATION_ITERS_PER_POPULATION': 3
+        'N_ITERS_BETWEEN_EVALS': 20,
+        'N_ITERS_PICK_BEST_AGENT': 60,
+        'OPTIMIZATION_ITERS_PER_POPULATION': 2
     }
     # ........................................................................
     
@@ -558,10 +581,10 @@ class AllInAgent():
             iteration = CHECKPOINT_ITER
             
         checkpointPath = os.path.join(pathPopulations, checkpointFile)
-        populations, params = loadCheckpoint(checkpointPath)
+        populations, pastBestAgents, params = loadCheckpoint(checkpointPath)
         
         print('\n........................................................')
-        print('Training started from checkpoint: ' + checkpointPath)
+        print('Starting training from checkpoint: ' + checkpointPath)
         print('........................................................')
     
     
@@ -583,7 +606,9 @@ class AllInAgent():
         
         populations = np.array([Population(params['POPULATION_SIZE'], params['WIN_LEN']) 
                                 for _ in range(params['N_POPULATIONS'])])
-
+        
+        pastBestAgents = {}
+        
         iteration = 0
     
     
@@ -595,6 +620,9 @@ class AllInAgent():
     
     pool = mp.Pool(N_CORES)
     
+
+
+
 
 
 # %%
@@ -609,7 +637,6 @@ class AllInAgent():
         # Evaluate populations
         if(iteration % params['N_ITERS_BETWEEN_EVALS'] == 0):
             print('\n.......................')
-            print('Win amounts:')
             
             # Create new fresh games for evaluation
             evalGameStates, evalStacks = initRandomGames(params['N_HANDS_FOR_EVAL'])
@@ -617,29 +644,41 @@ class AllInAgent():
             # Evaluate populations against each other
             _, popVsPopEvalRes, _, popIdxEval = evaluatePopulations(populations, evalGameStates, evalStacks, 
                                                                     params['WIN_LEN'], pool)
+
+            # Compute total win rates for populations
+            popVsPopTotalWinRates = totalWinRatesForPopulations(popVsPopEvalRes, popIdxEval)
+            assert np.isclose(np.sum(popVsPopTotalWinRates), 0)     # Check that games are zero sum
             
             # Evaluate populations against dummy opponents
-            dummyEvalRes = evaluateDummyOpponents(populations, evalGameStates, evalStacks, DUMMY_OPPONENTS, 
-                                                  params['WIN_LEN'], pool)
+            dummyEvalRes = evaluateAgainstOpponents(populations, evalGameStates, evalStacks, DUMMY_OPPONENTS, 
+                                                    params['WIN_LEN'], pool)
+
+            # Evaluate populations against past best agents
+            pastBestAgentEvalRes = evaluateAgainstOpponents(populations, evalGameStates, evalStacks, 
+                                                            pastBestAgents, params['WIN_LEN'], pool)
+            
+            # Pick the best agent
+            if(iteration % params['N_ITERS_PICK_BEST_AGENT'] == 0):
+                bestAgent = populations[np.argmax(popVsPopTotalWinRates)].bestAgent
+                pastBestAgents[iteration] = bestAgent
             
             # Save evaluation results
             np.save(os.path.join(pathEvalResults ,str(iteration)+'_eval_dummy_opponents'), dummyEvalRes)
+            np.save(os.path.join(pathEvalResults ,str(iteration)+'_eval_past_best_agents'), pastBestAgentEvalRes)
             np.save(os.path.join(pathEvalResults ,str(iteration)+'_eval_population_vs_population'), 
                     {'population_index':popIdxEval, 'res':popVsPopEvalRes})
             
             # Save models
-            saveCheckpoint(populations, params, pathPopulations, iteration)
+            saveCheckpoint(populations, pastBestAgents, params, pathPopulations, iteration)
             
             print('.......................\n')
 
-
-        
         samplingProbs = (popVsPopEvalRes*-1) + np.abs(np.min(popVsPopEvalRes*-1))
         samplingProbs /= np.sum(samplingProbs)
         idx = np.random.choice(np.arange(len(popIdxEval)), size=1, p=samplingProbs)[0]
         curPopIdx, opponentPopIdx = popIdxEval[idx,0], popIdxEval[idx,1]
         curPopulation, opponentPopulation = populations[curPopIdx], populations[opponentPopIdx]
-                
+        
         for optIter in range(params['OPTIMIZATION_ITERS_PER_POPULATION']):
             # Get fitness for agents in the population
             agentFitness = ftnessForAgentsInPopulation(curPopulation, [opponentPopulation], initGameStates, 
