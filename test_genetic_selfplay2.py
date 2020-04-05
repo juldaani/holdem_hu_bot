@@ -424,6 +424,12 @@ def getPopulationsToOptimize(popVsPopEvalRes, popIdxEval, pastBestAgentEvalRes, 
     return populationsToOptimize, opponentPopulations, (evalRes, indexes, identifiers)
 
 
+def printPopulationWinRates(popVsPopTotalWinRates):
+    print('Population win rates: ')
+    for i,val in enumerate(popVsPopTotalWinRates):
+        print('%3d %5.3f' % (i,val))
+
+
 class AiModel(nn.Module):
     def __init__(self, winLen):
         super(AiModel, self).__init__()
@@ -591,18 +597,18 @@ class AllInAgent():
         'WIN_LEN': 2,
         
         'N_POPULATIONS': 10,
-        'POPULATION_SIZE': 100,
-        'RATIO_BEST_INDIVIDUALS': 0.03,
+        'POPULATION_SIZE': 150,
+        'RATIO_BEST_INDIVIDUALS': 0.10,
         # 'MUTATION_SIGMA': 1.0e-2,
         # 'MUTATION_RATIO': 0.25,
-        'MUTATION_SIGMA': 1.0e-1,
-        'MUTATION_RATIO': 0.05,
+        'MUTATION_SIGMA': 2.5e-2,
+        'MUTATION_RATIO': 0.01,
         
-        'N_HANDS_FOR_EVAL': 20000,
-        'N_HANDS_FOR_OPTIMIZATION': 5000,
+        'N_HANDS_FOR_EVAL': 50000,
+        'N_HANDS_FOR_OPTIMIZATION': 10000,
         
-        'N_ITERS_PICK_BEST_AGENT': 10,
-        'N_OPTIMIZATIONS_BETWEEN_EVALS': 20
+        'N_ITERS_PICK_BEST_AGENT': 5,
+        'N_OPTIMIZATIONS_BETWEEN_EVALS': 30
         
         # 'N_ITERS_GENERATE_NEW_HANDS': 10,
         # 'N_ITERS_BETWEEN_EVALS': 10,
@@ -682,11 +688,11 @@ class AllInAgent():
 # %%
     
     while(1):
-        
+        print('\nIteration: ' + str(iteration))    
+        print('..................................................')
     
         # Evaluate populations
         # ....................................................................
-        print('\n..................................................')
         
         # Create new fresh games for evaluation
         evalGameStates, evalStacks = initRandomGames(params['N_HANDS_FOR_EVAL'])
@@ -698,7 +704,8 @@ class AllInAgent():
         # Compute total win rates for populations
         popVsPopTotalWinRates = totalWinRatesForPopulations(popVsPopEvalRes, popIdxEval)
         assert np.isclose(np.sum(popVsPopTotalWinRates), 0)     # Check that games are zero sum
-        
+        printPopulationWinRates(popVsPopTotalWinRates)
+            
         # Evaluate populations against dummy opponents
         dummyEvalRes = evaluateAgainstOpponents(populations, evalGameStates, evalStacks, DUMMY_OPPONENTS, 
                                                 params['WIN_LEN'], pool)
@@ -764,7 +771,7 @@ class AllInAgent():
         
                 # If max fitness of the population is above zero stop optimizing (mutation is skipped because we 
                 # want to know which one is the best agent in the population)
-                if(populationMeanFitness > 0 or populationMaxFitness > 0.4):
+                if(populationMeanFitness > 0 or populationMaxFitness > 0.4 or optIter > 100):
                     break
             
                 # Put n best agents without mutation to the next generation
