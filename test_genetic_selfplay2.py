@@ -374,6 +374,56 @@ def loadCheckpoint(path):
     return populations, pastBestAgents, params
 
 
+def wrapAgentIntoPopulation(agent, winLen):
+    tmpPop = Population(1, winLen)
+    tmpPop.agents[0] = agent
+    tmpPop.bestAgent = agent
+    
+    return tmpPop
+
+
+def getPopulationsToOptimize(popVsPopEvalRes, popIdxEval, pastBestAgentEvalRes, pastBestAgents, 
+                             populations, params):
+    # Put past agent evaluation results into numpy array
+    keys = pastBestAgentEvalRes.keys()
+    if(not pastBestAgentEvalRes):
+        pastAgentEval, pastAgentIdx = np.zeros(0), np.zeros((0,2), dtype=np.int)
+    else:
+        pastAgentEval = np.concatenate([pastBestAgentEvalRes[key] for key in keys])
+        pastAgentIdx = np.row_stack(([np.column_stack((np.arange(len(pastBestAgentEvalRes[key])), 
+                                         np.full(len(pastBestAgentEvalRes[key]), key))) for key in keys]))
+
+    # Generate identifiers to be able to separate which games are population-vs-population and 
+    # population-vs-past
+    pastIdentifier = ['past'] * len(pastAgentEval)
+    popIdentifier = ['pop'] * len(popVsPopEvalRes)
+    
+    # Stack pop-vs-pop and pop-vs-past
+    evalRes = np.concatenate((pastAgentEval,popVsPopEvalRes))
+    indexes = np.row_stack((pastAgentIdx,popIdxEval))
+    identifiers = np.concatenate((pastIdentifier,popIdentifier))
+    
+    # Sort
+    sorter = np.argsort(evalRes)
+    evalRes, indexes, identifiers = evalRes[sorter], indexes[sorter], identifiers[sorter]            
+    
+    # Create list of populations (to be optimized) and their opponents
+    populationsToOptimize, opponentPopulations = [], []
+    for i in range(len(evalRes)):
+        idxToOptimize = indexes[i,0]
+        idxOpponent = indexes[i,1]
+        
+        if(identifiers[i] == 'pop'):
+            populationsToOptimize.append(populations[idxToOptimize])
+            opponentPopulations.append(populations[idxOpponent])
+        if(identifiers[i] == 'past'):
+            populationsToOptimize.append(populations[idxToOptimize])
+            tmpPop = wrapAgentIntoPopulation(pastBestAgents[idxOpponent], params['WIN_LEN'])
+            opponentPopulations.append(tmpPop)
+    
+    return populationsToOptimize, opponentPopulations, (evalRes, indexes, identifiers)
+
+
 class AiModel(nn.Module):
     def __init__(self, winLen):
         super(AiModel, self).__init__()
@@ -548,13 +598,15 @@ class AllInAgent():
         'MUTATION_SIGMA': 1.0e-1,
         'MUTATION_RATIO': 0.05,
         
-        'N_HANDS_FOR_EVAL': 5000,
-        'N_HANDS_FOR_OPTIMIZATION': 1000,
+        'N_HANDS_FOR_EVAL': 20000,
+        'N_HANDS_FOR_OPTIMIZATION': 5000,
         
-        'N_ITERS_GENERATE_NEW_HANDS': 10,
-        'N_ITERS_BETWEEN_EVALS': 10,
         'N_ITERS_PICK_BEST_AGENT': 10,
-        'OPTIMIZATION_ITERS_PER_POPULATION': 2
+        'N_OPTIMIZATIONS_BETWEEN_EVALS': 20
+        
+        # 'N_ITERS_GENERATE_NEW_HANDS': 10,
+        # 'N_ITERS_BETWEEN_EVALS': 10,
+        #'OPTIMIZATION_ITERS_PER_POPULATION': 2
     }
     # ........................................................................
     
@@ -630,116 +682,111 @@ class AllInAgent():
 # %%
     
     while(1):
-        print(iteration)
         
-        # Create new games
-        if(iteration % params['N_ITERS_GENERATE_NEW_HANDS'] == 0):
-            initGameStates, initStacks = initRandomGames(params['N_HANDS_FOR_OPTIMIZATION'])
     
         # Evaluate populations
-        if(iteration % params['N_ITERS_BETWEEN_EVALS'] == 0):
-            print('\n.......................')
-            
-            # Create new fresh games for evaluation
-            evalGameStates, evalStacks = initRandomGames(params['N_HANDS_FOR_EVAL'])
-            
-            # Evaluate populations against each other
-            _, popVsPopEvalRes, _, popIdxEval = evaluatePopulations(populations, evalGameStates, evalStacks, 
-                                                                    params['WIN_LEN'], pool)
-
-            # Compute total win rates for populations
-            popVsPopTotalWinRates = totalWinRatesForPopulations(popVsPopEvalRes, popIdxEval)
-            assert np.isclose(np.sum(popVsPopTotalWinRates), 0)     # Check that games are zero sum
-            
-            # Evaluate populations against dummy opponents
-            dummyEvalRes = evaluateAgainstOpponents(populations, evalGameStates, evalStacks, DUMMY_OPPONENTS, 
-                                                    params['WIN_LEN'], pool)
-
-            # # Evaluate populations against past best agents
-            pastBestAgentEvalRes = evaluateAgainstOpponents(populations, evalGameStates, evalStacks, 
-                                                            pastBestAgents, params['WIN_LEN'], pool)
-            
-            
-            # keys = pastBestAgentEvalRes.keys()
-            # pastBestAgentEvalResArr = np.concatenate([pastBestAgentEvalRes[key] for key in keys])
-            
-            
-            # # pastBestAgentIdx = np.row_stack(([np.column_stack((np.full(len(pastBestAgentEvalRes[key]),
-            # #                                                            len(populations)+i),
-            # #                                                    np.arange(len(pastBestAgentEvalRes[key])))) 
-            # #                                   for i,key in enumerate(keys)]))
-            
-            # pastBestAgentIdx = np.row_stack(([np.column_stack((np.arange(len(pastBestAgentEvalRes[key])),
-            #                                                    np.full(len(pastBestAgentEvalRes[key]),
-            #                                                            len(populations)+i))) 
-            #                                   for i,key in enumerate(keys)]))
-            
-            
-            # Pick the best agent and append to past best agents
-            if(iteration % params['N_ITERS_PICK_BEST_AGENT'] == 0):
-                bestAgent = populations[np.argmax(popVsPopTotalWinRates)].bestAgent
-                pastBestAgents[iteration] = bestAgent
-                    
-            
-            # Save evaluation results
-            np.save(os.path.join(pathEvalResults ,str(iteration)+'_eval_dummy_opponents'), dummyEvalRes)
-            np.save(os.path.join(pathEvalResults ,str(iteration)+'_eval_past_best_agents'), pastBestAgentEvalRes)
-            np.save(os.path.join(pathEvalResults ,str(iteration)+'_eval_population_vs_population'), 
-                    {'population_index':popIdxEval, 'res':popVsPopEvalRes})
-            
-            # Save models
-            saveCheckpoint(populations, pastBestAgents, params, pathPopulations, iteration)
-            
-            print('.......................\n')
-            
-
-
-        samplingProbs = (popVsPopEvalRes*-1) + np.abs(np.min(popVsPopEvalRes*-1))
-        samplingProbs /= np.sum(samplingProbs)
-        idx = np.random.choice(np.arange(len(popIdxEval)), size=1, p=samplingProbs)[0]
-        curPopIdx, opponentPopIdx = popIdxEval[idx,0], popIdxEval[idx,1]
-        populationToOptimize, opponentPopulation = populations[curPopIdx], populations[opponentPopIdx]
+        # ....................................................................
+        print('\n..................................................')
         
+        # Create new fresh games for evaluation
+        evalGameStates, evalStacks = initRandomGames(params['N_HANDS_FOR_EVAL'])
         
+        # Evaluate populations against each other
+        _, popVsPopEvalRes, _, popIdxEval = evaluatePopulations(populations, evalGameStates, evalStacks, 
+                                                                params['WIN_LEN'], pool)
+
+        # Compute total win rates for populations
+        popVsPopTotalWinRates = totalWinRatesForPopulations(popVsPopEvalRes, popIdxEval)
+        assert np.isclose(np.sum(popVsPopTotalWinRates), 0)     # Check that games are zero sum
         
-        optIter = 0
-        while(1):
-            # Get fitness for agents in the population
-            agentFitness = ftnessForAgentsInPopulation(populationToOptimize, [opponentPopulation], 
-                                                       initGameStates, initStacks, params['WIN_LEN'], pool)
+        # Evaluate populations against dummy opponents
+        dummyEvalRes = evaluateAgainstOpponents(populations, evalGameStates, evalStacks, DUMMY_OPPONENTS, 
+                                                params['WIN_LEN'], pool)
 
-            # Update the best agent in current population
-            populationToOptimize.bestAgent = populationToOptimize.agents[np.argmax(agentFitness)]
+        # Evaluate populations against past best agents
+        pastBestAgentEvalRes = evaluateAgainstOpponents(populations, evalGameStates, evalStacks, 
+                                                        pastBestAgents, params['WIN_LEN'], pool)
+        
+        # Create list of populations (to be optimized) and their opponents
+        populationsToOptimize, opponentPopulations, info = getPopulationsToOptimize(popVsPopEvalRes, popIdxEval, 
+                                                                                    pastBestAgentEvalRes, 
+                                                                                    pastBestAgents, populations, 
+                                                                                     params)
+        
+        # Pick the best agent and append to past best agents
+        if(iteration % params['N_ITERS_PICK_BEST_AGENT'] == 0):
+            bestAgent = populations[np.argmax(popVsPopTotalWinRates)].bestAgent
+            pastBestAgents[iteration] = bestAgent
+                
+        
+        # Save evaluation results
+        np.save(os.path.join(pathEvalResults ,str(iteration)+'_eval_dummy_opponents'), dummyEvalRes)
+        np.save(os.path.join(pathEvalResults ,str(iteration)+'_eval_past_best_agents'), pastBestAgentEvalRes)
+        np.save(os.path.join(pathEvalResults ,str(iteration)+'_eval_population_vs_population'), 
+                {'population_index':popIdxEval, 'res':popVsPopEvalRes})
+        
+        # Save models
+        saveCheckpoint(populations, pastBestAgents, params, pathPopulations, iteration)
+        
+        # ....................................................................
+        
 
-            populationMeanFitness, populationMaxFitness = np.mean(agentFitness), np.max(agentFitness)
+
+        # samplingProbs = (popVsPopEvalRes*-1) + np.abs(np.min(popVsPopEvalRes*-1))
+        # samplingProbs /= np.sum(samplingProbs)
+        # idx = np.random.choice(np.arange(len(popIdxEval)), size=1, p=samplingProbs)[0]
+        # curPopIdx, opponentPopIdx = popIdxEval[idx,0], popIdxEval[idx,1]
+        # populationToOptimize, opponentPopulation = populations[curPopIdx], populations[opponentPopIdx]
+        
+        for k in range(params['N_OPTIMIZATIONS_BETWEEN_EVALS']):
+            populationToOptimize = populationsToOptimize[k]
+            opponentPopulation = opponentPopulations[k]
             
-            print(optIter, populationMeanFitness*100, populationMaxFitness*100)
+            print('\n==> ' + str(k) + ' / ' + str(params['N_OPTIMIZATIONS_BETWEEN_EVALS']))
+            print(info[2][k], '| idx:  ' + str(info[1][k]) + ' | init_res: % 5.3f' %((info[0][k])*100))
+            
+            # Create new games
+            # if(k % params['N_ITERS_GENERATE_NEW_HANDS'] == 0):
+            initGameStates, initStacks = initRandomGames(params['N_HANDS_FOR_OPTIMIZATION'])
+            
+            optIter = 0
+            while(1):
+                # Get fitness for agents in the population
+                agentFitness = ftnessForAgentsInPopulation(populationToOptimize, [opponentPopulation], 
+                                                           initGameStates, initStacks, params['WIN_LEN'], pool)
     
-            # If max fitness of the population is above zero stop optimizing (mutation is skipped because we 
-            # want to know which one is the best agent in the population)
-            if(populationMeanFitness > 0 or populationMaxFitness > 0.4):
-                break
+                # Update the best agent in current population
+                populationToOptimize.bestAgent = populationToOptimize.agents[np.argmax(agentFitness)]
+    
+                populationMeanFitness, populationMaxFitness = np.mean(agentFitness), np.max(agentFitness)
+                
+                print('% 3d % 5.3f % 5.3f' %(optIter, (populationMeanFitness*100), (populationMaxFitness*100)))
         
-            # Put n best agents without mutation to the next generation
-            nextGeneration = []
-            sorter = np.argsort(agentFitness)
-            bestIdx = sorter[-int(len(sorter)*params['RATIO_BEST_INDIVIDUALS']):]
-            nextGeneration = [populationToOptimize.agents[idx] for idx in bestIdx]
+                # If max fitness of the population is above zero stop optimizing (mutation is skipped because we 
+                # want to know which one is the best agent in the population)
+                if(populationMeanFitness > 0 or populationMaxFitness > 0.4):
+                    break
             
-            # Mutate
-            for i in range(params['POPULATION_SIZE']-len(nextGeneration)):
-                idx = bestIdx[np.random.randint(len(bestIdx))]
+                # Put n best agents without mutation to the next generation
+                nextGeneration = []
+                sorter = np.argsort(agentFitness)
+                bestIdx = sorter[-int(len(sorter)*params['RATIO_BEST_INDIVIDUALS']):]
+                nextGeneration = [populationToOptimize.agents[idx] for idx in bestIdx]
                 
-                agent = copy.deepcopy(populationToOptimize.agents[idx])
-                # model.mutateAllLayers(MUTATION_SIGMA, ratio=MUTATION_RATIO)
-                agent.model.mutateOneLayer(params['MUTATION_SIGMA'], ratio=params['MUTATION_RATIO'])
+                # Mutate
+                for i in range(params['POPULATION_SIZE']-len(nextGeneration)):
+                    idx = bestIdx[np.random.randint(len(bestIdx))]
+                    
+                    agent = copy.deepcopy(populationToOptimize.agents[idx])
+                    # model.mutateAllLayers(MUTATION_SIGMA, ratio=MUTATION_RATIO)
+                    agent.model.mutateOneLayer(params['MUTATION_SIGMA'], ratio=params['MUTATION_RATIO'])
+                    
+                    nextGeneration.append(agent)
                 
-                nextGeneration.append(agent)
-            
-            populationToOptimize.agents = np.array(nextGeneration)
-            
-            optIter += 1
+                populationToOptimize.agents = np.array(nextGeneration)
                 
+                optIter += 1
+                    
             
             
         print('')
