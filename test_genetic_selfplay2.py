@@ -329,7 +329,7 @@ def evaluateAgainstOpponents(populations, gameStates, initStacks, opponents, WIN
         m = np.array(opponentAgentsId) == key
         sorter = np.argsort(np.array(agentsPopulationNumbers)[m])
         wins = np.array(meanWinAmounts)[m][sorter]
-        res[key] = wins
+        res[key] = list(wins)
     
     return res
 
