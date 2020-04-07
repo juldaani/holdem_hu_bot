@@ -309,17 +309,28 @@ def evaluatePopulations(populations, gameStates, initStacks, WIN_LEN, pool):
     return finalGameStates, meanWinAmounts, winAmounts, popIdxEval
 
 
-def evaluateAgainstOpponents(populations, gameStates, initStacks, opponents, WIN_LEN, pool):  
+def evaluateAgainstOpponents(populations, gameStates, initStacks, opponents, WIN_LEN, pool): 
+    # Create list of agents to play against each other
+    agents, agentsPopulationNumbers, opponentAgents, opponentAgentsId = [], [], [], []
+    for i,pop in enumerate(populations):
+        agents += [pop.bestAgent for _ in range(len(opponents.values()))]
+        agentsPopulationNumbers += [i] * len(opponents.values())
+        keys = opponents.keys()
+        opponentAgents += [opponents[key] for key in keys]
+        opponentAgentsId += list(keys)
+    
+    # Play games
+    finalGameStates, meanWinAmounts, winAmounts = playGamesParallel(pool, gameStates, initStacks, 
+                                                                    agents, opponentAgents, WIN_LEN)
+    
     res = {}
-    for key, opponent in zip(opponents.keys(), opponents.values()):
-        agents = [pop.bestAgent for pop in populations]
-        opponentAgents = [opponent for _ in agents]
-        
-        finalGameStates, meanWinAmounts, winAmounts = playGamesParallel(pool, gameStates, initStacks, 
-                                                                        agents, opponentAgents, WIN_LEN)
-
-        res[key] = meanWinAmounts
-        
+    # Wrangle results into correct form
+    for key in opponents.keys():
+        m = np.array(opponentAgentsId) == key
+        sorter = np.argsort(np.array(agentsPopulationNumbers)[m])
+        wins = np.array(meanWinAmounts)[m][sorter]
+        res[key] = wins
+    
     return res
 
 
@@ -588,7 +599,8 @@ class AllInAgent():
     # ........................................................................
     PATH_SAVE_RESULTS = '/home/juho/dev_folder/data/poker_ai'
     
-    PATH_LOAD_CHECKPOINT = '' # Leave empty if fresh start
+    PATH_LOAD_CHECKPOINT = '/home/juho/dev_folder/data/poker_ai/2020-04-07_10-14-09' # Leave empty if fresh 
+        # start
     CHECKPOINT_ITER = -1    # Use -1 to load the most recent checkpoint
 
     N_CORES = 20
@@ -626,8 +638,9 @@ class AllInAgent():
         # List checkpoint files
         checkpointsFiles = np.array([f for f in os.listdir(pathPopulations)])
         iters = np.array([int(f.split('_')[0]) for f in checkpointsFiles])
-        iters = iters[np.argsort(iters)]
-        checkpointsFiles = checkpointsFiles[np.argsort(iters)]
+        sorter = np.argsort(iters)
+        iters = iters[sorter]
+        checkpointsFiles = checkpointsFiles[sorter]
         
         # Load latest checkpoint
         iteration = iters[CHECKPOINT_ITER]
@@ -680,8 +693,6 @@ class AllInAgent():
     
     pool = mp.Pool(N_CORES)
     
-
-
 
 
 
@@ -747,7 +758,7 @@ class AllInAgent():
         
         # for k in range(params['N_OPTIMIZATIONS_BETWEEN_EVALS']):
         # for k in range(len(populationsToOptimize)):
-        for k in np.nonzero(popEvalRes < 0.05)[0][::-1]:
+        for k in np.nonzero(popEvalRes < 0.10)[0][::-1]:
             populationToOptimize = populationsToOptimize[k]
             opponentPopulation = copy.deepcopy(opponentPopulations[k])
             
@@ -773,7 +784,7 @@ class AllInAgent():
         
                 # If max fitness of the population is above zero stop optimizing (mutation is skipped because we 
                 # want to know which one is the best agent in the population)
-                if((optIter >= 1 and populationMaxFitness > 0.05) or optIter > 40):
+                if((optIter >= 1 and populationMaxFitness > 0.10) or optIter > 40):
                     break
             
                 # Put n best agents without mutation to the next generation
