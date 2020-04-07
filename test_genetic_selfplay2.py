@@ -178,8 +178,7 @@ def optimizeWinAmounts(modelWinAmounts):
 def totalWinRatesForPopulations(popVsPopEvalRes, popIdxEval):
     nPopulations = len(np.unique(popIdxEval[:,0]))
     sorter = np.argsort(popIdxEval[:,0])
-    res = popVsPopEvalRes[sorter].reshape((-1,nPopulations-1))   # Rows contain results
-        # for each population
+    res = popVsPopEvalRes[sorter].reshape((-1,nPopulations))   # Rows contain results # for each population
     
     return np.sum(res,1)
 
@@ -298,13 +297,14 @@ def initGamesWrapper(nGames, seed=-1):
     
 
 def evaluatePopulations(populations, gameStates, initStacks, WIN_LEN, pool):
-    popIdxEval = np.column_stack((np.triu_indices(len(populations), k=1)))
+    popIdxEval = np.column_stack((np.triu_indices(len(populations), k=0)))
     agents1 = [populations[idx].bestAgent for idx in popIdxEval[:,0]]
     agents2 = [populations[idx].bestAgent for idx in popIdxEval[:,1]]
     finalGameStates, meanWinAmounts, winAmounts = playGamesParallel(pool, gameStates, initStacks, 
                                                                     agents1, agents2, WIN_LEN)
-    meanWinAmounts = np.concatenate((meanWinAmounts,np.array(meanWinAmounts)*-1))
-    popIdxEval = np.row_stack((popIdxEval, np.roll(popIdxEval, shift=1, axis=1)))
+    m = ~(popIdxEval[:,0] == popIdxEval[:,1])   # Mask for substracting games against itself
+    meanWinAmounts = np.concatenate((meanWinAmounts,np.array(meanWinAmounts)[m]*-1))
+    popIdxEval = np.row_stack((popIdxEval, np.roll(popIdxEval[m], shift=1, axis=1)))
 
     return finalGameStates, meanWinAmounts, winAmounts, popIdxEval
 
@@ -435,13 +435,13 @@ class AiModel(nn.Module):
         super(AiModel, self).__init__()
         
         self.layers = nn.Sequential(
-            nn.Linear(7*(winLen+17), 250), nn.ReLU(),
-            nn.Linear(250, 250), nn.ReLU(),
-            nn.Linear(250, 250), nn.ReLU(),
-            #nn.Linear(250, 250), nn.ReLU(),
-            #nn.Linear(250, 250), nn.ReLU(),
-            #nn.Linear(250, 250), nn.ReLU(),
-            nn.Linear(250, 10))
+            nn.Linear(7*(winLen+17), 50), nn.ReLU(),
+            # nn.Linear(250, 250), nn.ReLU(),
+            # nn.Linear(250, 250), nn.ReLU(),
+            # nn.Linear(250, 250), nn.ReLU(),
+            # nn.Linear(250, 250), nn.ReLU(),
+            # nn.Linear(250, 250), nn.ReLU(),
+            nn.Linear(50, 10))
         
         # Get references to weights and biases. These are used when mutating the model.
         self.weights, self.biases = [], []
@@ -596,8 +596,8 @@ class AllInAgent():
     params = {
         'WIN_LEN': 2,
         
-        'N_POPULATIONS': 10,
-        'POPULATION_SIZE': 150,
+        'N_POPULATIONS': 1,
+        'POPULATION_SIZE': 100,
         'RATIO_BEST_INDIVIDUALS': 0.10,
         # 'MUTATION_SIGMA': 1.0e-2,
         # 'MUTATION_RATIO': 0.25,
@@ -605,11 +605,11 @@ class AllInAgent():
         'MUTATION_RATIO': 0.01,
         
         'N_HANDS_FOR_EVAL': 50000,
-        'N_HANDS_FOR_OPTIMIZATION': 10000,
+        'N_HANDS_FOR_OPTIMIZATION': 20000,
         
-        'N_ITERS_PICK_BEST_AGENT': 5,
-        'N_OPTIMIZATIONS_BETWEEN_EVALS': 30
+        'N_ITERS_PICK_BEST_AGENT': 10
         
+        #'N_OPTIMIZATIONS_BETWEEN_EVALS': 30
         # 'N_ITERS_GENERATE_NEW_HANDS': 10,
         # 'N_ITERS_BETWEEN_EVALS': 10,
         #'OPTIMIZATION_ITERS_PER_POPULATION': 2
@@ -718,14 +718,14 @@ class AllInAgent():
         populationsToOptimize, opponentPopulations, info = getPopulationsToOptimize(popVsPopEvalRes, popIdxEval, 
                                                                                     pastBestAgentEvalRes, 
                                                                                     pastBestAgents, populations, 
-                                                                                     params)
+                                                                                    params)
+        popEvalRes, popIdx, popId = info[0], info[1], info[2]
         
         # Pick the best agent and append to past best agents
         if(iteration % params['N_ITERS_PICK_BEST_AGENT'] == 0):
             bestAgent = populations[np.argmax(popVsPopTotalWinRates)].bestAgent
             pastBestAgents[iteration] = bestAgent
                 
-        
         # Save evaluation results
         np.save(os.path.join(pathEvalResults ,str(iteration)+'_eval_dummy_opponents'), dummyEvalRes)
         np.save(os.path.join(pathEvalResults ,str(iteration)+'_eval_past_best_agents'), pastBestAgentEvalRes)
@@ -745,12 +745,14 @@ class AllInAgent():
         # curPopIdx, opponentPopIdx = popIdxEval[idx,0], popIdxEval[idx,1]
         # populationToOptimize, opponentPopulation = populations[curPopIdx], populations[opponentPopIdx]
         
-        for k in range(params['N_OPTIMIZATIONS_BETWEEN_EVALS']):
+        # for k in range(params['N_OPTIMIZATIONS_BETWEEN_EVALS']):
+        # for k in range(len(populationsToOptimize)):
+        for k in np.nonzero(popEvalRes < 0.05)[0][::-1]:
             populationToOptimize = populationsToOptimize[k]
-            opponentPopulation = opponentPopulations[k]
+            opponentPopulation = copy.deepcopy(opponentPopulations[k])
             
-            print('\n==> ' + str(k) + ' / ' + str(params['N_OPTIMIZATIONS_BETWEEN_EVALS']))
-            print(info[2][k], '| idx:  ' + str(info[1][k]) + ' | init_res: % 5.3f' %((info[0][k])*100))
+            print('\n==> ' + str(k) )
+            print(popId[k], '| idx:  ' + str(popIdx[k]) + ' | init_res: % 5.3f' %((popEvalRes[k])*100))
             
             # Create new games
             # if(k % params['N_ITERS_GENERATE_NEW_HANDS'] == 0):
@@ -771,7 +773,7 @@ class AllInAgent():
         
                 # If max fitness of the population is above zero stop optimizing (mutation is skipped because we 
                 # want to know which one is the best agent in the population)
-                if(populationMeanFitness > 0 or populationMaxFitness > 0.4 or optIter > 100):
+                if((optIter >= 1 and populationMaxFitness > 0.05) or optIter > 40):
                     break
             
                 # Put n best agents without mutation to the next generation
